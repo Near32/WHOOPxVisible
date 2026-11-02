@@ -63,6 +63,7 @@ class HrBroadcastService : Service() {
         private const val ALERT_CHANNEL_ID = "pacing_alerts"
         private const val NOTIFICATION_ID = 42
         private const val ALERT_ID = 43
+        private const val TAG = "HrBle"
 
         const val ACTION_START = "io.github.kevin.visibleclone.START_HR"
         const val ACTION_STOP = "io.github.kevin.visibleclone.STOP_HR"
@@ -95,6 +96,7 @@ class HrBroadcastService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        android.util.Log.i(TAG, "onStartCommand action=${intent?.action}")
         loadAlertThresholds()
         when (intent?.action) {
             ACTION_STOP -> {
@@ -157,6 +159,7 @@ class HrBroadcastService : Service() {
     }
 
     override fun onDestroy() {
+        android.util.Log.i(TAG, "onDestroy")
         gatt?.close()
         gatt = null
         flush()
@@ -186,6 +189,10 @@ class HrBroadcastService : Service() {
         val callback = object : ScanCallback() {
             @SuppressLint("MissingPermission")
             override fun onScanResult(callbackType: Int, result: ScanResult) {
+                android.util.Log.d(
+                    TAG,
+                    "scan hit name=${result.device.name} uuids=${result.scanRecord?.serviceUuids}",
+                )
                 // The strap advertises the HR service UUID when broadcasting.
                 val hasHrService = result.scanRecord?.serviceUuids?.any { it.uuid == HEART_RATE_SERVICE }
                     ?: result.scanRecord?.serviceUuids != null
@@ -215,16 +222,36 @@ class HrBroadcastService : Service() {
     private val gattCallback = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
-            when (newState) {
-                BluetoothGatt.STATE_CONNECTED -> {
-                    state.value = state.value.copy(connected = true, status = "Discovering services…")
+            android.util.Log.i(TAG, "onConnectionStateChange status=$status newState=$newState")
+            when {
+                newState == BluetoothGatt.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS -> {
+                    state.value = state.value.copy(
+                        connected = true,
+                        status = "Connected to ${state.value.deviceName ?: "strap"} — discovering services…",
+                    )
                     g.discoverServices()
                 }
-                BluetoothGatt.STATE_DISCONNECTED -> {
+                newState == BluetoothGatt.STATE_DISCONNECTED -> {
                     g.close()
                     gatt = null
-                    state.value = state.value.copy(connected = false, bpm = null, status = "Disconnected — searching again")
+                    state.value = state.value.copy(
+                        connected = false,
+                        bpm = null,
+                        status = if (status == BluetoothGatt.GATT_SUCCESS) {
+                            "Strap disconnected — searching again"
+                        } else {
+                            "Connection refused (GATT $status). Is another app holding the strap?"
+                        },
+                    )
                     scope.launch { delay(5_000); scanAndConnect() }
+                }
+                else -> {
+                    // e.g. 133 on some phones when the peripheral rejects the connection.
+                    android.util.Log.w(TAG, "unexpected state newState=$newState status=$status")
+                    state.value = state.value.copy(
+                        connected = false,
+                        status = "Connection failed (GATT $status)",
+                    )
                 }
             }
         }
@@ -233,7 +260,11 @@ class HrBroadcastService : Service() {
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
             val ch = g.getService(HEART_RATE_SERVICE)?.getCharacteristic(HEART_RATE_MEASUREMENT)
             if (ch == null) {
-                state.value = state.value.copy(status = "Heart Rate service not found")
+                val found = g.services?.joinToString { it.uuid.toString().take(8) } ?: "none"
+                android.util.Log.w(TAG, "HR service missing; services=$found")
+                state.value = state.value.copy(
+                    status = "Heart Rate service not found — strap may not be broadcasting",
+                )
                 g.disconnect()
                 return
             }
@@ -248,6 +279,7 @@ class HrBroadcastService : Service() {
                     g.writeDescriptor(desc)
                 }
             }
+            android.util.Log.i(TAG, "HR characteristic subscribed; services=${g.services?.size}")
             state.value = state.value.copy(status = "Receiving heart rate")
             readBattery(g)
         }

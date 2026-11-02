@@ -260,8 +260,14 @@ fun TodayScreen(
                         contentColor = if (live) Color.White else MaterialTheme.colorScheme.onPrimaryContainer,
                     ),
                 ) { Text(if (s.hr.connected) "Stop live HR" else "Start live HR") }
-                if (!live) {
-                    VGap(6)
+                // Always show what the BLE client is doing — a silent revert is unhelpful.
+                VGap(6)
+                Text(
+                    s.hr.status,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (!live && s.hr.status == "Idle") {
                     Text(
                         "Turn on Broadcast Heart Rate in the WHOOP app first.",
                         style = MaterialTheme.typography.bodySmall,
