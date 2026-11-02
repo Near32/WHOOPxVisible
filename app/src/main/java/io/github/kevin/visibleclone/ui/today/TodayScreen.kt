@@ -74,6 +74,7 @@ fun TodayScreen(
     onOpenSettings: () -> Unit,
     onOpenLogs: () -> Unit,
     onOpenMonthly: () -> Unit,
+    onOpenThresholds: () -> Unit,
 ) {
     var showWhy by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -207,6 +208,63 @@ fun TodayScreen(
                         budget = s.budget.toFloat(),
                         lineColor = MaterialTheme.colorScheme.primary,
                         nowSlot = LocalTime.now().let { (it.hour * 4 + it.minute / 15).coerceIn(0, 95) },
+                    )
+                }
+            }
+        }
+
+        // ---- Today's activities: why each cost what it did ----
+        if (s.activities.isNotEmpty()) {
+            item {
+                SoftCard {
+                    Text("Today's activities", style = MaterialTheme.typography.titleMedium)
+                    VGap(8)
+                    s.activities.forEach { a ->
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 5.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    a.name.replace('-', ' ').replaceFirstChar { it.uppercase() },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                val hrLine = buildString {
+                                    append("${a.minutes} min")
+                                    a.avgHeartRate?.let { append(" · avg $it bpm") }
+                                    a.impliedHeartRate?.let { append(" · rest-side $it bpm") }
+                                }
+                                Text(
+                                    hrLine,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(
+                                    if (a.zone == "UNSCORED") "—" else "%.2f".format(a.points),
+                                    style = MaterialTheme.typography.titleSmall,
+                                )
+                                Text(
+                                    when (a.zone) {
+                                        "UNSCORED" -> "not scored"
+                                        "EXERTION" -> "exertion"
+                                        "ACTIVITY" -> "activity"
+                                        else -> "rest"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = ZonePalette.color(a.zone),
+                                )
+                            }
+                        }
+                    }
+                    VGap(4)
+                    Text(
+                        "“rest-side” is the heart rate inferred for the low-zone part of an activity. " +
+                            "Unscored activities (meditation, recovery) cost nothing.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -440,7 +498,7 @@ fun TodayScreen(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(onClick = onOpenLogs, modifier = Modifier.weight(1f)) { Text("Logs") }
                 FilledTonalButton(onClick = onOpenLive, modifier = Modifier.weight(1f)) { Text("Pacing") }
-                FilledTonalButton(onClick = onOpenMonthly, modifier = Modifier.weight(1f)) { Text("Monthly") }
+                FilledTonalButton(onClick = onOpenThresholds, modifier = Modifier.weight(1f)) { Text("Zones") }
             }
         }
 

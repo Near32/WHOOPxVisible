@@ -27,6 +27,25 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 
+/** Why one logged activity cost what it did. */
+data class ActivityInsight(
+    val name: String,
+    val startMs: Long,
+    val minutes: Int,
+    val avgHeartRate: Int?,
+    val impliedHeartRate: Int?,
+    val zone: String,
+    val points: Double,
+)
+
+/** Thresholds on a given day — they move with resting HR. */
+data class ThresholdDay(
+    val date: String,
+    val restingHr: Int,
+    val activityBpm: Int,
+    val exertionBpm: Int,
+)
+
 data class DayPoint(
     val date: String,
     val stability: Int,
@@ -51,6 +70,10 @@ data class DashboardState(
     val pacingDay: List<Float> = emptyList(),
     /** Points/minute at the current bpm, so the panel can show accumulation live. */
     val currentRatePerMin: Double = 0.0,
+    val activities: List<ActivityInsight> = emptyList(),
+    val thresholdDays: List<ThresholdDay> = emptyList(),
+    val activityThresholdBpm: Int = 62,
+    val exertionThresholdBpm: Int = 120,
     val budget: Double = 14.0,
     val config: PacingConfig = PacingConfig(),
     val sleepHours: Double? = null,
@@ -121,6 +144,83 @@ class DashboardViewModel(private val app: App) : ViewModel() {
             recompute()
             local.update { it.copy(syncing = false) }
         }
+    }
+
+    /**
+     * Per-activity breakdown, so a logged activity can explain itself: what average HR it implied,
+     * which zone that landed in, and what it cost.
+     */
+    private fun insightsFor(
+        workouts: List<io.github.kevin.visibleclone.data.local.WorkoutEntity>,
+        rhr: Int,
+        maxHr: Int,
+        cfg: PacingConfig,
+    ): List<ActivityInsight> = workouts.mapNotNull { w ->
+        val start = runCatching { java.time.Instant.parse(w.start).toEpochMilli() }.getOrNull()
+            ?: return@mapNotNull null
+        val end = runCatching { java.time.Instant.parse(w.end).toEpochMilli() }.getOrNull()
+            ?: start
+        val minutes = ((end - start) / 60_000L).toInt().coerceAtLeast(0)
+
+        val implied = if (w.hasZoneData) impliedZoneZero(w.zoneDurationsMs(), w.avgHeartRate, rhr, maxHr, cfg) else null
+        val points = if (w.hasZoneData) {
+            PacePoints.fromZoneDurations(w.zoneDurationsMs(), rhr, maxHr, cfg, w.avgHeartRate).points
+        } else 0.0
+
+        val representative = implied ?: w.avgHeartRate
+        val zone = representative?.let {
+            PacePoints.zoneAt(it, rhr, maxHr, cfg).name
+        } ?: "UNSCORED"
+
+        ActivityInsight(
+            name = w.sportName ?: "activity",
+            startMs = start,
+            minutes = minutes,
+            avgHeartRate = w.avgHeartRate,
+            impliedHeartRate = implied,
+            zone = zone,
+            points = points,
+        )
+    }.sortedByDescending { it.startMs }
+
+    /** Zone-0 intensity recovered from the activity average, or null when not applicable. */
+    private fun impliedZoneZero(
+        zoneMillis: List<Long?>,
+        avgHeartRate: Int?,
+        rhr: Int,
+        maxHr: Int,
+        cfg: PacingConfig,
+    ): Int? {
+        if (avgHeartRate == null || zoneMillis.size < 6) return null
+        val minutes = zoneMillis.map { (it ?: 0L) / 60_000.0 }
+        val total = minutes.sum()
+        if (total <= 0 || minutes[0] < total * 0.2) return null
+        val reserve = (maxHr - rhr).coerceAtLeast(1)
+        val edges = listOf(0.0) + cfg.whoopZoneHrr + listOf(1.0)
+        val mids = (0..5).map { i -> rhr + ((edges[i] + edges[i + 1]) / 2) * reserve }
+        val implied = (avgHeartRate * total - (1..5).sumOf { mids[it] * minutes[it] }) / minutes[0]
+        val upper = rhr + cfg.whoopZoneHrr.first() * reserve
+        return if (implied in rhr.toDouble()..upper) implied.toInt() else null
+    }
+
+    /**
+     * Daily thresholds over the last 90 days. They move because they are derived from resting HR,
+     * which is why a fixed bpm number would drift away from your physiology.
+     */
+    private fun thresholdHistory(
+        recoveries: List<RecoveryEntity>,
+        maxHr: Int,
+        cfg: PacingConfig,
+    ): List<ThresholdDay> = recoveries.mapNotNull { r ->
+        val rhr = r.restingHeartRate ?: return@mapNotNull null
+        val date = r.createdAt.take(10)
+        if (date.isBlank()) return@mapNotNull null
+        ThresholdDay(
+            date = date,
+            restingHr = rhr,
+            activityBpm = cfg.activityThreshold(rhr),
+            exertionBpm = cfg.exertionThreshold(rhr, maxHr),
+        )
     }
 
     /**
@@ -344,6 +444,10 @@ class DashboardViewModel(private val app: App) : ViewModel() {
                 pacingFromZones = zoneDerived,
                 todayHr = samples.takeLast(180).map { it.bpm },
                 pacingDay = buildPacingDay(todaysWorkoutCount, dayStart, rhr, maxHr, cfg, samples),
+                activities = insightsFor(todaysWorkouts, rhr, maxHr, cfg),
+                activityThresholdBpm = cfg.activityThreshold(rhr),
+                exertionThresholdBpm = cfg.exertionThreshold(rhr, maxHr),
+                thresholdDays = thresholdHistory(recoveries, maxHr, cfg),
                 workoutsToday = todaysWorkoutCount,
                 budget = budget,
                 sleepHours = sleepHours,

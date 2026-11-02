@@ -9,7 +9,8 @@ import org.junit.Test
  * gives the workout's average HR we infer zone 0's real intensity from it.
  */
 class ZoneZeroAnchorTest {
-    private val cfg = PacingConfig()
+    // Ramp off here: these tests assert crisp classification, not the soft boundary.
+    private val cfg = PacingConfig(thresholdRampBpm = 0.0)
     private val rhr = 47
     private val maxHr = 194          // reserve 147; zone 0 = 47..106 bpm, midpoint 76
     private val oneHour = 3_600_000L

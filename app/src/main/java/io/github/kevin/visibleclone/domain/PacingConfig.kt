@@ -26,6 +26,14 @@ data class PacingConfig(
     // ---- PacePoints ----
     val activityOffset: Int = 15,
     val exertionFraction: Double = 0.5,
+    /**
+     * Half-width of the smooth transition around each threshold, in bpm.
+     *
+     * A hard step made chess (61.2 bpm average) cost either ~9 points or zero depending on one
+     * beat. Widening the transition means a session near the boundary costs proportionally rather
+     * than all-or-nothing. 0 restores the old hard step.
+     */
+    val thresholdRampBpm: Double = 5.0,
     val c1: Double = 1.0,
     val c2: Double = 3.0,
     val alpha: Double = 0.05,
@@ -49,6 +57,14 @@ data class PacingConfig(
     val whoopZoneHrr: List<Double> = listOf(0.40, 0.60, 0.70, 0.80, 0.90),
     val fallbackMaxHr: Int = 185,
 
+    /**
+     * Direct bpm overrides for the two thresholds. Visible lets you adjust your own heart-rate
+     * zones (their guidance: tune zones first, then budget), so the derived values are only a
+     * starting point. Null means "derive from resting HR / max HR".
+     */
+    val activityBpmOverride: Int? = null,
+    val exertionBpmOverride: Int? = null,
+
     // ---- Budget ----
     val budgetAtStability1: Double = 4.0,
     val budgetAtStability5: Double = 14.0,
@@ -57,10 +73,10 @@ data class PacingConfig(
     val exertionAlertHoldSeconds: Int = 30,
     val exertionAlertCooldownMinutes: Int = 5,
 ) {
-    fun activityThreshold(rhr: Int): Int = rhr + activityOffset
+    fun activityThreshold(rhr: Int): Int = activityBpmOverride ?: (rhr + activityOffset)
 
     fun exertionThreshold(rhr: Int, maxHr: Int): Int =
-        (rhr + exertionFraction * (maxHr - rhr)).toInt()
+        exertionBpmOverride ?: (rhr + exertionFraction * (maxHr - rhr)).toInt()
 
     fun dailyBudget(stability: Int): Double {
         val clamped = stability.coerceIn(1, 5)

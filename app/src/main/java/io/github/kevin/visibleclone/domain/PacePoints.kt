@@ -74,15 +74,29 @@ object PacePoints {
         )
     }
 
-    /** Rate in points/minute for a single reading — used by the live screen. */
+    /**
+     * Rate in points/minute for a single reading, with smooth transitions at both thresholds.
+     *
+     * Below the activity threshold the rate eases in from zero rather than switching on; above the
+     * exertion threshold it eases into the exponential. This keeps a session straddling a boundary
+     * from being priced all-or-nothing. `zoneAt` still reports the crisp zone for display.
+     */
     fun rateAt(bpm: Int, restingHr: Int, maxHr: Int, config: PacingConfig): Double {
         val activity = config.activityThreshold(restingHr)
         val exertion = config.exertionThreshold(restingHr, maxHr)
-        return when {
-            bpm < activity -> 0.0
-            bpm < exertion -> config.c1 * config.zoneScale
-            else -> config.c2 * config.zoneScale * kotlin.math.exp(config.alpha * (bpm - exertion))
-        }
+        val ramp = config.thresholdRampBpm
+
+        val a = smoothstep((bpm - (activity - ramp)) / (2 * ramp))
+        if (a <= 0.0) return 0.0
+        val e = smoothstep((bpm - (exertion - ramp)) / (2 * ramp))
+        val excess = config.c2 * kotlin.math.exp(config.alpha * (bpm - exertion).coerceAtLeast(0)) - config.c1
+        return config.zoneScale * (config.c1 * a + excess * e)
+    }
+
+    /** Hermite smoothstep; linear when ramp is zero. */
+    private fun smoothstep(t: Double): Double {
+        val x = t.coerceIn(0.0, 1.0)
+        return x * x * (3 - 2 * x)
     }
 
     /**
@@ -142,17 +156,13 @@ object PacePoints {
             val bpm = effective[i].toInt()
             peak = maxOf(peak, bpm)
             val minutes = ms / 60_000.0
+            // One rate function for live samples and zone durations alike.
+            points += rateAt(bpm, restingHr, maxHr, config) * minutes
+            // Minutes are bucketed crisply for display.
             when {
                 bpm < activity -> restMin += (ms / 60_000L).toInt()
-                bpm < exertion -> {
-                    actMin += (ms / 60_000L).toInt()
-                    points += config.c1 * config.zoneScale * minutes
-                }
-                else -> {
-                    excMin += (ms / 60_000L).toInt()
-                    points += config.c2 * config.zoneScale *
-                        kotlin.math.exp(config.alpha * (bpm - exertion)) * minutes
-                }
+                bpm < exertion -> actMin += (ms / 60_000L).toInt()
+                else -> excMin += (ms / 60_000L).toInt()
             }
         }
         return PaceBreakdown(points, restMin, actMin, excMin, peak)

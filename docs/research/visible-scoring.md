@@ -121,6 +121,28 @@ workouts the reserve model explained the data with 8 violations in 340, against 
 Calibration is manual (Settings → Zone calibration) and writes the result into `whoopZoneHrr`.
 Zones with too few observations keep the default.
 
+### Rest / Activity / Exertion behaviour
+
+Visible's published behaviour (Help Center):
+
+- Three zones: **Rest**, **Activity**, **Exertion**. Rest-zone time accumulates **no** PacePoints.
+- Exertion accumulates roughly 4x the Activity rate, on an exponential curve.
+- **Nothing reduces PacePoints.** Resting earns nothing back; calming and capacity-building
+  activities simply sit in the Rest zone and cost zero.
+- Capacity grows indirectly: the same task costs less as HR falls, and the budget is raised
+  manually after four days of data (Profile → Pacing settings → Budget and PaceSetter).
+- Visible recommends tuning **heart-rate zones first, then budget**, and warns against changing
+  either frequently.
+
+This app mirrors that: unscored activities (meditation, other-recovery, tai-chi — WHOOP returns
+`score: null` for them) cost exactly zero, and the anchors are editable.
+
+### Soft threshold transitions
+
+A hard step made a chess session averaging 61.2 bpm cost either ~9 points or zero depending on one
+beat against the 62 bpm threshold. `thresholdRampBpm` (default 5) applies a smoothstep around each
+boundary so time near a threshold is priced proportionally. Set it to 0 for the old step function.
+
 ### Daily budget from Stability
 
 Interpolated between two anchors, editable:

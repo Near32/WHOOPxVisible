@@ -31,6 +31,7 @@ import io.github.kevin.visibleclone.ui.live.LiveScreen
 import io.github.kevin.visibleclone.ui.logs.LogsScreen
 import io.github.kevin.visibleclone.ui.logs.LogsViewModel
 import io.github.kevin.visibleclone.ui.monthly.MonthlyScreen
+import io.github.kevin.visibleclone.ui.thresholds.ThresholdsScreen
 import io.github.kevin.visibleclone.ui.settings.SettingsScreen
 import io.github.kevin.visibleclone.ui.settings.SettingsViewModel
 import io.github.kevin.visibleclone.ui.theme.VisibleCloneTheme
@@ -85,6 +86,7 @@ private sealed interface Screen {
     data object Logs : Screen
     data object Settings : Screen
     data object Monthly : Screen
+    data object Thresholds : Screen
 }
 
 @androidx.compose.runtime.Composable
@@ -143,6 +145,7 @@ private fun AppNav(initialIntent: Intent?, onIntentHandled: () -> Unit) {
                     onOpenSettings = { screen = Screen.Settings },
                     onOpenLogs = { screen = Screen.Logs },
                     onOpenMonthly = { screen = Screen.Monthly },
+                    onOpenThresholds = { screen = Screen.Thresholds },
                 )
             }
             Screen.Checkin -> androidx.compose.foundation.layout.Box(mod) {
@@ -162,6 +165,13 @@ private fun AppNav(initialIntent: Intent?, onIntentHandled: () -> Unit) {
             }
             Screen.Monthly -> androidx.compose.foundation.layout.Box(mod) {
                 MonthlyScreen(dash, onBack = { screen = Screen.Today }, onSaved = { screen = Screen.Today })
+            }
+            Screen.Thresholds -> androidx.compose.foundation.layout.Box(mod) {
+                ThresholdsScreen(
+                    s = state,
+                    onBack = { screen = Screen.Today },
+                    onOpenSettings = { screen = Screen.Settings },
+                )
             }
         }
     }

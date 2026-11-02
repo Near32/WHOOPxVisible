@@ -211,6 +211,21 @@ fun SettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
                     NumberField("Exertion fraction of HR reserve", cfg.exertionFraction) {
                         cfg = cfg.copy(exertionFraction = it)
                     }
+                    // Visible's guidance is to tune your own zones before touching the budget, so
+                    // these take precedence over the derived values.
+                    OptionalNumberField(
+                        label = "Fixed activity threshold (bpm)",
+                        value = cfg.activityBpmOverride,
+                        onChange = { cfg = cfg.copy(activityBpmOverride = it) },
+                    )
+                    OptionalNumberField(
+                        label = "Fixed exertion threshold (bpm)",
+                        value = cfg.exertionBpmOverride,
+                        onChange = { cfg = cfg.copy(exertionBpmOverride = it) },
+                    )
+                    NumberField("Threshold softness (bpm)", cfg.thresholdRampBpm) {
+                        cfg = cfg.copy(thresholdRampBpm = it.coerceIn(0.0, 20.0))
+                    }
                     NumberField("Activity points per minute", cfg.c1) { cfg = cfg.copy(c1 = it) }
                     NumberField("Exertion base rate", cfg.c2) { cfg = cfg.copy(c2 = it) }
                     NumberField("Exertion exponential alpha", cfg.alpha) { cfg = cfg.copy(alpha = it) }
@@ -271,6 +286,28 @@ fun SettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
 
         item { Spacer(Modifier.height(32.dp)) }
     }
+}
+
+/** Blank means "derive it"; entering a number pins the threshold. */
+@Composable
+private fun OptionalNumberField(
+    label: String,
+    value: Int?,
+    onChange: (Int?) -> Unit,
+) {
+    var text by remember(value) { mutableStateOf(value?.toString() ?: "") }
+    OutlinedTextField(
+        value = text,
+        onValueChange = { t ->
+            text = t
+            onChange(t.trim().toIntOrNull())
+        },
+        label = { Text(label) },
+        supportingText = { Text("Blank = derived from resting and max HR") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(Modifier.height(6.dp))
 }
 
 @Composable
