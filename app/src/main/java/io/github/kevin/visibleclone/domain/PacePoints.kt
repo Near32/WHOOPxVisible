@@ -97,6 +97,7 @@ object PacePoints {
         restingHr: Int,
         maxHr: Int,
         config: PacingConfig,
+        avgHeartRate: Int? = null,
     ): PaceBreakdown {
         val reserve = (maxHr - restingHr).coerceAtLeast(1)
         // Edges: zone 0 starts at reserve, zone 5 ends at max HR.
@@ -104,6 +105,25 @@ object PacePoints {
         val midpoints = (0..5).map { i ->
             restingHr + ((edges[i] + edges[i + 1]) / 2.0) * reserve
         }
+        // Anchor zone 0 to the workout's own average HR.
+        //
+        // Zone 0 is wide (rest up to 40% of reserve) and most low-effort time sits near the bottom
+        // of it, so its midpoint badly overstates the real intensity: a 3h chess session with an
+        // average of 66 bpm was being charged as if it were 76 bpm. Invert the weighted mean
+        // instead — everything outside zone 0 uses its midpoint, and zone 0 absorbs the residual.
+        val effective = midpoints.toMutableList()
+        if (avgHeartRate != null && zoneMillis.size >= 6) {
+            val minutes = zoneMillis.map { (it ?: 0L) / 60_000.0 }
+            val total = minutes.sum()
+            if (total > 0 && minutes[0] > 0) {
+                val nonZeroContribution = (1..5).sumOf { midpoints[it] * minutes[it] }
+                val implied = (avgHeartRate * total - nonZeroContribution) / minutes[0]
+                val lower = restingHr.toDouble()
+                val upper = restingHr + config.whoopZoneHrr.first() * reserve
+                if (implied in lower..upper) effective[0] = implied
+            }
+        }
+
         val activity = config.activityThreshold(restingHr)
         val exertion = config.exertionThreshold(restingHr, maxHr)
 
@@ -116,7 +136,7 @@ object PacePoints {
         zoneMillis.forEachIndexed { i, msLong ->
             val ms = msLong ?: 0L
             if (ms <= 0L) return@forEachIndexed
-            val bpm = midpoints[i].toInt()
+            val bpm = effective[i].toInt()
             peak = maxOf(peak, bpm)
             val minutes = ms / 60_000.0
             when {
@@ -140,6 +160,7 @@ object PacePoints {
         val startMs: Long,
         val endMs: Long,
         val zoneMillis: List<Long?>,
+        val avgHeartRate: Int? = null,
     )
 
     /**
@@ -177,7 +198,7 @@ object PacePoints {
             val uncoveredFraction = 1.0 - covered.toDouble() / duration
             if (uncoveredFraction <= 0.0) return@forEach
 
-            val z = fromZoneDurations(a.zoneMillis, restingHr, maxHr, config)
+            val z = fromZoneDurations(a.zoneMillis, restingHr, maxHr, config, a.avgHeartRate)
             points += z.points * uncoveredFraction
             rest += (z.restingMinutes * uncoveredFraction).toInt()
             act += (z.activityMinutes * uncoveredFraction).toInt()

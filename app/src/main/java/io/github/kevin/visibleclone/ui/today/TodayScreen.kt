@@ -286,6 +286,14 @@ fun TodayScreen(
                         contentColor = if (live) Color.White else MaterialTheme.colorScheme.onPrimaryContainer,
                     ),
                 ) { Text(if (s.hr.connected) "Stop live HR" else "Start live HR") }
+                if (live && s.currentRatePerMin > 0.0) {
+                    VGap(4)
+                    Text(
+                        "Accumulating %.2f points/min".format(s.currentRatePerMin),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = ZonePalette.color(zone),
+                    )
+                }
                 // Always show what the BLE client is doing — a silent revert is unhelpful.
                 VGap(6)
                 Text(

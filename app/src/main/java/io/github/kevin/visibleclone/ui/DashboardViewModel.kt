@@ -49,6 +49,8 @@ data class DashboardState(
     val todayHr: List<Int> = emptyList(),
     /** Cumulative PacePoints per 15-minute slot since local midnight (96 entries). */
     val pacingDay: List<Float> = emptyList(),
+    /** Points/minute at the current bpm, so the panel can show accumulation live. */
+    val currentRatePerMin: Double = 0.0,
     val budget: Double = 14.0,
     val config: PacingConfig = PacingConfig(),
     val sleepHours: Double? = null,
@@ -79,6 +81,14 @@ class DashboardViewModel(private val app: App) : ViewModel() {
         refresh()
         viewModelScope.launch {
             app.settings.tokens.collect { toks -> local.update { it.copy(connectedToWhoop = toks != null) } }
+        }
+        // Live HR changes the numbers continuously; recompute while a session is running.
+        viewModelScope.launch {
+            while (true) {
+                val hr = HrBroadcastService.state.value
+                if (hr.connected && !hr.isStale()) recomputePacing()
+                kotlinx.coroutines.delay(10_000)
+            }
         }
         // Tuning thresholds in Settings should immediately change today's numbers.
         viewModelScope.launch {
@@ -150,7 +160,9 @@ class DashboardViewModel(private val app: App) : ViewModel() {
             val endIso = java.time.Instant.ofEpochMilli(dayStart + 86_400_000L).toString()
             val coverage = PacePoints.coverageIntervals(samples, 120_000)
             dao.workoutsBetween(iso, endIso).filter { it.hasZoneData }.forEach { w ->
-                val pts = PacePoints.fromZoneDurations(w.zoneDurationsMs(), rhr, maxHr, cfg).points
+                val pts = PacePoints.fromZoneDurations(
+                    w.zoneDurationsMs(), rhr, maxHr, cfg, w.avgHeartRate,
+                ).points
                 if (pts <= 0.0) return@forEach
                 val s = runCatching { java.time.Instant.parse(w.start).toEpochMilli() }.getOrNull()
                     ?: return@forEach
@@ -175,6 +187,46 @@ class DashboardViewModel(private val app: App) : ViewModel() {
 
         var acc = 0f
         return slots.map { acc += it; acc }
+    }
+
+    /**
+     * Recomputes only the pacing figures from stored HR samples. Cheaper than a full [recompute]
+     * (no API, no re-baselining) and is what makes the live panel move on its own.
+     */
+    suspend fun recomputePacing() {
+        val cfg = app.settings.currentConfig()
+        val dao = app.db.dao()
+        val maxHr = app.settings.currentBody()?.maxHeartRate ?: cfg.fallbackMaxHr
+        val rhr = dao.allRecoveries().lastOrNull()?.restingHeartRate ?: 60
+
+        val dayStart = LocalDate.now(zone).atStartOfDay(zone).toInstant().toEpochMilli()
+        val samples = dao.hrBetween(dayStart, System.currentTimeMillis())
+            .map { HrSample(it.timestampMs, it.bpm) }
+        if (samples.isEmpty()) return
+
+        val zonedActivities = dao.workoutsBetween(
+            java.time.Instant.ofEpochMilli(dayStart).toString(),
+            java.time.Instant.ofEpochMilli(dayStart + 86_400_000L).toString(),
+        ).filter { it.hasZoneData }.mapNotNull { w ->
+            val a = runCatching { java.time.Instant.parse(w.start).toEpochMilli() }.getOrNull()
+            val b = runCatching { java.time.Instant.parse(w.end).toEpochMilli() }.getOrNull()
+            if (a == null || b == null) null
+            else PacePoints.ZonedActivity(a, b, w.zoneDurationsMs(), w.avgHeartRate)
+        }
+
+        val pacing = PacePoints.combine(samples, zonedActivities, rhr, maxHr, cfg)
+        val bpm = HrBroadcastService.state.value.bpm
+        local.update {
+            it.copy(
+                pacing = pacing,
+                pacingEstimated = false,
+                pacingFromZones = zonedActivities.isNotEmpty(),
+                currentRatePerMin = bpm?.let { b -> PacePoints.rateAt(b, rhr, maxHr, cfg) } ?: 0.0,
+                pacingDay = buildPacingDay(
+                    zonedActivities.size, dayStart, rhr, maxHr, cfg, samples,
+                ),
+            )
+        }
     }
 
     private fun isSessionExpired(e: Throwable): Boolean {
@@ -238,7 +290,7 @@ class DashboardViewModel(private val app: App) : ViewModel() {
             val s = runCatching { java.time.Instant.parse(w.start).toEpochMilli() }.getOrNull()
             val e = runCatching { java.time.Instant.parse(w.end).toEpochMilli() }.getOrNull()
             if (s == null || e == null) null
-            else PacePoints.ZonedActivity(s, e, w.zoneDurationsMs())
+            else PacePoints.ZonedActivity(s, e, w.zoneDurationsMs(), w.avgHeartRate)
         }
         val pacing: PaceBreakdown
         var estimated = false
