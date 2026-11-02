@@ -1,0 +1,4 @@
+# Add WHOOP OAuth app credentials from https://developer.whoop.com/ (Developer Dashboard).
+# Registered redirect URL must be exactly: visibleclone://oauth
+whoop.clientId=YOUR_CLIENT_ID
+whoop.clientSecret=YOUR_CLIENT_SECRET

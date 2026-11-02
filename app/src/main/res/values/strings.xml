@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Visible Clone</string>
+
+    <!-- Health Connect privacy policy as shown in the system permission screen. -->
+    <string name="health_connect_rationale">Visible Clone reads your heart rate, sleep and steps from
+        Health Connect to budget your daily energy. All data stays on this phone.</string>
+</resources>
