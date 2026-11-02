@@ -54,6 +54,15 @@ class ZoneZeroAnchorTest {
         assertEquals(plain.points, weird.points, 1e-9)
     }
 
+    @Test fun `anchoring is skipped when zone 0 is a small share`() {
+        // 1 min zone 0 alongside 30 min zone 2: dividing by 1 min is numerically unstable and the
+        // measured data confirms nonsense results, so fall back to the midpoint.
+        val zones = listOf(oneHour / 60, 0L, 30 * oneHour / 60, 0L, 0L, 0L)
+        val anchored = PacePoints.fromZoneDurations(zones, rhr, maxHr, cfg, avgHeartRate = 150)
+        val plain = PacePoints.fromZoneDurations(zones, rhr, maxHr, cfg, avgHeartRate = null)
+        assertEquals(plain.points, anchored.points, 1e-9)
+    }
+
     @Test fun `higher zones still use their midpoints`() {
         // With no zone-0 time there is nothing to anchor, so behaviour is unchanged.
         val r = PacePoints.fromZoneDurations(
