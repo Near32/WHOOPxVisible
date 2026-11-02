@@ -17,12 +17,13 @@ Privacy policy: [PRIVACY.md](https://github.com/Near32/visible-clone/blob/main/P
 |---|---|---|
 | Overnight HRV, resting HR, sleep stages, strain | WHOOP REST API `/v2` | Needs sign-in |
 | Live heart rate + exertion alerts | WHOOP **Broadcast Heart Rate** over BLE | Toggle it in the WHOOP app first |
+| **Logged activities' time-in-zone** | WHOOP `/v2/activity/workout` → `zone_durations` | Real measured zone minutes, used for PacePoints on any day with tagged activities |
 | Fallback intraday HR | Health Connect (Fitbit) | ~minute granularity, not real-time |
 | Check-ins, logs, monthly check-in | Local Room DB | On-device only |
 
-**The WHOOP REST API has no intraday heart-rate stream**, so PacePoints for past days are estimated
-from each day's average HR and labelled as such. Only today, with live BLE or Health Connect data, is
-measured.
+**The WHOOP REST API has no continuous heart-rate stream.** But activities you log in WHOOP carry
+real `zone_durations`, so a day with tagged activities gets measured zone minutes. Days with no
+tagged activity and no live HR fall back to an average-HR estimate, labelled in the UI.
 
 ## Build
 

@@ -59,7 +59,19 @@ data class WorkoutEntity(
     val strain: Double?,
     val avgHeartRate: Int?,
     val maxHeartRate: Int?,
-)
+    /** WHOOP zones 0..5, milliseconds in each. Real zone data for logged activities. */
+    val zone0Ms: Long? = null,
+    val zone1Ms: Long? = null,
+    val zone2Ms: Long? = null,
+    val zone3Ms: Long? = null,
+    val zone4Ms: Long? = null,
+    val zone5Ms: Long? = null,
+) {
+    fun zoneDurationsMs(): List<Long?> =
+        listOf(zone0Ms, zone1Ms, zone2Ms, zone3Ms, zone4Ms, zone5Ms)
+
+    val hasZoneData: Boolean get() = zoneDurationsMs().any { (it ?: 0L) > 0L }
+}
 
 // ---------- Our own data ----------
 
@@ -132,8 +144,18 @@ interface HealthDao {
     @Query("SELECT * FROM sleeps ORDER BY start")
     suspend fun allSleeps(): List<SleepEntity>
 
+    @Query("SELECT * FROM workouts WHERE start >= :fromIso AND start < :toIso ORDER BY start")
+    suspend fun workoutsBetween(fromIso: String, toIso: String): List<WorkoutEntity>
+
     @Query("SELECT * FROM sleeps WHERE start >= :fromIso AND start < :toIso AND nap = 0 ORDER BY start")
     suspend fun sleepsBetween(fromIso: String, toIso: String): List<SleepEntity>
+
+    @Query("SELECT COUNT(*) FROM recoveries WHERE restingHeartRate IS NULL")
+    suspend fun recoveriesMissingRhr(): Int
+
+    /** Workouts stored before zone-duration capture, or not yet scored by WHOOP. */
+    @Query("SELECT COUNT(*) FROM workouts WHERE zone2Ms IS NULL AND zone3Ms IS NULL AND zone4Ms IS NULL")
+    suspend fun workoutsMissingZones(): Int
 
     @Query("SELECT MAX(start) FROM cycles")
     suspend fun lastCycleStart(): String?

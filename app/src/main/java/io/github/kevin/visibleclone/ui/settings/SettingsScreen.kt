@@ -95,6 +95,14 @@ fun SettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
                             FilledTonalButton(onClick = vm::syncNow, enabled = !s.busy) { Text("Sync now") }
                             OutlinedButton(onClick = vm::signOut) { Text("Sign out") }
                         }
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = {
+                                val url = vm.beginAuth()
+                                context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
+                            },
+                            enabled = !s.busy,
+                        ) { Text("Sign in again") }
                     } else {
                         Text(
                             "Sign in with your WHOOP account. Overnight HRV, resting HR and sleep come from the API.",

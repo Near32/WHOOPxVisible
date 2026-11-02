@@ -10,3 +10,8 @@ captures/
 .venv/
 *.apk
 *.aab
+
+# Never commit credential exports or the developer-portal printout
+*.pdf
+WHOOP Developer Portal*
+secrets.properties

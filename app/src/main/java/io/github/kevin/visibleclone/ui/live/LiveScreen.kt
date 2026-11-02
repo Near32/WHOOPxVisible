@@ -28,18 +28,14 @@ import io.github.kevin.visibleclone.ui.DashboardState
 import io.github.kevin.visibleclone.ui.DashboardViewModel
 import io.github.kevin.visibleclone.ui.common.ScoreRing
 import io.github.kevin.visibleclone.ui.common.VGap
-import io.github.kevin.visibleclone.ui.theme.zoneColor
+import io.github.kevin.visibleclone.ui.theme.ZonePalette
 
 @Composable
 fun LiveScreen(vm: DashboardViewModel, s: DashboardState, onBack: () -> Unit) {
     val rhr = s.rhr ?: 60
     val bpm = s.hr.bpm
     val zone = bpm?.let { PacePoints.zoneAt(it, rhr, s.maxHeartRate, s.config) }
-    val color = when (zone) {
-        PacePoints.Zone.EXERTION -> zoneColor("EXERTION", false)
-        PacePoints.Zone.ACTIVITY -> zoneColor("ACTIVITY", false)
-        else -> zoneColor("RESTING", false)
-    }
+    val color = ZonePalette.color(zone?.name ?: "RESTING")
     val live = s.hr.connected && !s.hr.isStale()
 
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {

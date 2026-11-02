@@ -23,7 +23,7 @@ class Converters {
         LogEntryEntity::class,
         MonthlyCheckinEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)

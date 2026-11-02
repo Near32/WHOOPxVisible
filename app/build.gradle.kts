@@ -57,6 +57,12 @@ android {
     // Debug APK is ~71 MB because it is unminified; release with R8 is far smaller.
 }
 
+// local.properties is read at configuration time, which Gradle does not track, so editing the
+// credentials used to leave a stale BuildConfig. Declare it as an input.
+tasks.matching { it.name.startsWith("generate") && it.name.endsWith("BuildConfig") }.configureEach {
+    inputs.file(rootProject.file("local.properties")).optional()
+}
+
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2025.12.01")
     implementation(composeBom)

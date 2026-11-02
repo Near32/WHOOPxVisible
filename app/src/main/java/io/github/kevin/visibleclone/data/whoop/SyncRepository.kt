@@ -17,13 +17,24 @@ class SyncRepository(
     data class SyncResult(val cycles: Int, val recoveries: Int, val sleeps: Int, val workouts: Int)
 
     suspend fun sync(): SyncResult {
-        val start = lastSyncStart()
+        val start = if (dao.recoveriesMissingRhr() > 0) {
+            // A partial or older sync left gaps; refetch the whole baseline window.
+            android.util.Log.i("WhoopSync", "incomplete recovery rows found — full backfill")
+            Instant.now().minus(Duration.ofDays(90))
+        } else {
+            lastSyncStart()
+        }
         val end = Instant.now()
+        android.util.Log.i("WhoopSync", "sync from $start to $end")
 
         val cycles = api.cycles(start, end)
         val recoveries = api.recoveries(start, end)
         val sleeps = api.sleeps(start, end)
         val workouts = api.workouts(start, end)
+        android.util.Log.i(
+            "WhoopSync",
+            "fetched cycles=${cycles.size} recoveries=${recoveries.size} sleeps=${sleeps.size} workouts=${workouts.size}",
+        )
 
         dao.upsertCycles(cycles)
         dao.upsertRecoveries(recoveries)

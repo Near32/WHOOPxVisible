@@ -29,6 +29,15 @@ data class PacingConfig(
     val c1: Double = 1.0,
     val c2: Double = 3.0,
     val alpha: Double = 0.05,
+    /**
+     * Global scale applied to every per-minute rate.
+     *
+     * The comparison doc's c1 = 1 point/minute is illustrative and yields absurd totals against a
+     * ~14-point budget (an hour of activity would cost 60 points). 0.05 makes an hour of activity
+     * cost ~3 points, i.e. roughly a fifth of the budget — which matches how Visible prices
+     * ordinary tasks. Tune it once you have a week of real days.
+     */
+    val zoneScale: Double = 0.05,
     val fallbackMaxHr: Int = 185,
 
     // ---- Budget ----

@@ -6,7 +6,7 @@ import org.junit.Test
 
 class PacePointsTest {
 
-    private val config = PacingConfig()
+    private val config = PacingConfig(zoneScale = 1.0)
     // rhr 60 -> activity 75, exertion with maxHr 180 -> 60 + 0.5*120 = 120
     private val rhr = 60
     private val maxHr = 180
@@ -59,6 +59,13 @@ class PacePointsTest {
         assertEquals(PacePoints.Zone.RESTING, PacePoints.zoneAt(70, rhr, maxHr, config))
         assertEquals(PacePoints.Zone.ACTIVITY, PacePoints.zoneAt(100, rhr, maxHr, config))
         assertEquals(PacePoints.Zone.EXERTION, PacePoints.zoneAt(130, rhr, maxHr, config))
+    }
+
+    @Test fun `default scale keeps a realistic day within a few budgets`() {
+        val real = PacingConfig()
+        // A 3-hour active day at 1x activity rate should cost a sensible fraction of a 14-pt budget.
+        val day = PacePoints.fromZoneDurations(listOf(0, 0, 180 * 60_000L, 0, 0, 0), rhr, maxHr, real)
+        assertTrue("expected a few points, got ${day.points}", day.points in 1.0..14.0)
     }
 
     @Test fun `budget interpolates between anchors`() {

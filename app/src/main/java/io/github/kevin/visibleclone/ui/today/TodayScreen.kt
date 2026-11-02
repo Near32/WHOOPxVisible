@@ -10,13 +10,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
@@ -33,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -40,12 +43,15 @@ import androidx.compose.ui.unit.sp
 import io.github.kevin.visibleclone.domain.PacePoints
 import io.github.kevin.visibleclone.ui.DashboardState
 import io.github.kevin.visibleclone.ui.DashboardViewModel
-import io.github.kevin.visibleclone.ui.common.ScoreRing
-import io.github.kevin.visibleclone.ui.common.SectionHeader
+import io.github.kevin.visibleclone.ui.common.PaceArc
+import io.github.kevin.visibleclone.ui.common.SoftCard
 import io.github.kevin.visibleclone.ui.common.Sparkline
 import io.github.kevin.visibleclone.ui.common.VGap
-import io.github.kevin.visibleclone.ui.theme.zoneColor
+import io.github.kevin.visibleclone.ui.common.ZoneHrLine
+import io.github.kevin.visibleclone.ui.theme.Visible
+import io.github.kevin.visibleclone.ui.theme.ZonePalette
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
@@ -64,226 +70,336 @@ fun TodayScreen(
     var showWhy by remember { mutableStateOf(false) }
     val sheet = rememberModalBottomSheetState()
     val live = s.hr.connected && !s.hr.isStale()
-    val zone = s.hr.bpm?.let { PacePoints.zoneAt(it, s.rhr ?: 60, s.maxHeartRate, s.config).name } ?: "RESTING"
+    val zone = s.hr.bpm?.let { PacePoints.zoneAt(it, s.rhr ?: 60, s.maxHeartRate, s.config).name }
+        ?: "RESTING"
+    val spentFraction = (s.pacing.points / s.budget).toFloat()
+    val dayElapsed = (LocalTime.now().toSecondOfDay() / 86_400f).coerceIn(0f, 1f)
 
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        item { Spacer(Modifier.height(8.dp)) }
+        item { Spacer(Modifier.height(4.dp)) }
 
         item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Column {
-                    Text("Today", style = MaterialTheme.typography.headlineSmall)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
                     Text(
                         LocalDate.now().format(DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.getDefault())),
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Text("Today", style = MaterialTheme.typography.headlineSmall)
                 }
                 if (s.syncing) {
-                    CircularProgressIndicator(Modifier.padding(12.dp).height(22.dp))
+                    CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                 } else {
-                    IconButton(onClick = vm::refresh) { Icon(Icons.Default.Refresh, "Sync") }
+                    IconButton(onClick = vm::refresh) {
+                        Icon(Icons.Default.Refresh, "Sync", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                // Always-visible entry point: sign-in lives here and must never be buried.
+                IconButton(onClick = onOpenSettings) {
+                    Icon(
+                        Icons.Default.Settings,
+                        "Settings and sign-in",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
 
-        if (!s.connectedToWhoop) {
+        s.syncError?.let { err ->
             item {
-                Card(colors = CardDefaults.cardColors(MaterialTheme.colorScheme.secondaryContainer)) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("Connect WHOOP to get your scores", fontWeight = FontWeight.SemiBold)
-                        VGap(4)
-                        Text(
-                            "Sign in once in Settings; overnight HRV and resting heart rate drive the Stability Score.",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                        VGap(8)
-                        Button(onClick = onOpenSettings) { Text("Open Settings") }
+                SoftCard(color = MaterialTheme.colorScheme.errorContainer) {
+                    Text(
+                        if (s.needsReauth) "Sign-in expired" else "Sync problem",
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    VGap(2)
+                    Text(err, style = MaterialTheme.typography.bodySmall)
+                    if (s.needsReauth) {
+                        VGap(10)
+                        Button(onClick = onOpenSettings) { Text("Sign in again") }
                     }
+                }
+            }
+        }
+
+        // ---- PacePoints arc: the hero element ----
+        item {
+            SoftCard {
+                PaceArc(
+                    spent = spentFraction,
+                    paceSetter = dayElapsed,
+                    height = 210,
+                    spentColor = ZonePalette.color(zone),
+                ) {
+                    Text(
+                        "%.1f".format(s.pacing.points),
+                        fontSize = 52.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        "of %.0f PacePoints".format(s.budget),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                if (s.pacingEstimated) {
+                    Text(
+                        "Estimated from your average heart rate — start live HR for exact pacing.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else if (s.pacingFromZones) {
+                    Text(
+                        "From ${s.workoutsToday} logged ${if (s.workoutsToday == 1) "activity" else "activities"}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                VGap(14)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    ZoneStat("Rest", "${s.pacing.restingMinutes}m", Visible.rest)
+                    ZoneStat("Activity", "${s.pacing.activityMinutes}m", Visible.activity)
+                    ZoneStat("Exertion", "${s.pacing.exertionMinutes}m", Visible.exertion)
+                }
+            }
+        }
+
+        // ---- Heart rate ----
+        item {
+            SoftCard {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            if (live && s.hr.bpm != null) "${s.hr.bpm}" else "—",
+                            fontSize = 30.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(" bpm", style = MaterialTheme.typography.bodyMedium)
+                        Spacer(Modifier.size(8.dp))
+                        Box(
+                            Modifier.clip(CircleShape).background(ZonePalette.color(zone))
+                                .padding(horizontal = 10.dp, vertical = 3.dp)
+                        ) {
+                            Text(
+                                if (live) ZonePalette.label(zone) else "Off",
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                    }
+                    if (s.history.isNotEmpty()) {
+                        Text(
+                            "Peak ${s.pacing.peakBpm.takeIf { it > 0 } ?: "—"}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                VGap(10)
+                // Only plot real intraday readings. Resting HR across days is not "your heart rate
+                // today" and would put the line permanently in the rest band.
+                if (s.todayHr.size >= 2) {
+                    ZoneHrLine(
+                        values = s.todayHr,
+                        activityBpm = s.config.activityThreshold(s.rhr ?: 60),
+                        exertionBpm = s.config.exertionThreshold(s.rhr ?: 60, s.maxHeartRate),
+                        modifier = Modifier.fillMaxWidth().height(64.dp),
+                        restColor = Visible.rest,
+                        activityColor = Visible.activity,
+                        exertionColor = Visible.exertion,
+                    )
+                    VGap(8)
+                }
+                Button(
+                    onClick = if (s.hr.connected) vm::stopLive else vm::startLive,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (live) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = if (live) Color.White else MaterialTheme.colorScheme.onPrimaryContainer,
+                    ),
+                ) { Text(if (s.hr.connected) "Stop live HR" else "Start live HR") }
+                if (!live) {
+                    VGap(6)
+                    Text(
+                        "Turn on Broadcast Heart Rate in the WHOOP app first.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
 
         // ---- Stability ----
         item {
-            Card {
-                Column(Modifier.padding(16.dp)) {
-                    val stability = s.stability
-                    if (stability == null || stability.calibrating) {
-                        Text("Stability", style = MaterialTheme.typography.titleMedium)
-                        VGap(4)
-                        Text(stability?.interpretation ?: "No overnight data yet")
-                        if (stability != null) {
-                            VGap(4)
+            SoftCard {
+                val stability = s.stability
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Stability",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (stability == null || stability.calibrating) {
+                            VGap(2)
                             Text(
-                                "${stability.baselineNights} of ${s.config.minBaselineNights} nights collected",
-                                style = MaterialTheme.typography.bodySmall,
+                                stability?.interpretation ?: "No overnight data yet",
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            if (stability != null) {
+                                Text(
+                                    "${stability.baselineNights} of ${s.config.minBaselineNights} nights collected",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        } else {
+                            Row(verticalAlignment = Alignment.Bottom) {
+                                Text(
+                                    "${stability.score}",
+                                    fontSize = 40.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                Text(
+                                    " / 5",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.padding(bottom = 6.dp),
+                                )
+                                Spacer(Modifier.size(10.dp))
+                                Text(
+                                    stability.interpretation,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.padding(bottom = 8.dp),
+                                )
+                            }
+                        }
+                    }
+                    if (stability != null && !stability.calibrating) {
+                        Box(
+                            Modifier.size(52.dp).clip(CircleShape)
+                                .background(stabilityColor(stability.score))
+                                .padding(2.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                "${stability.score}",
+                                style = MaterialTheme.typography.titleLarge,
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
                             )
                         }
-                    } else {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            ScoreRing(
-                                fraction = stability.score / 5f,
-                                diameter = 96,
-                                color = MaterialTheme.colorScheme.primary,
-                                trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                            ) {
-                                Text("${stability.score}", fontSize = 30.sp, fontWeight = FontWeight.Bold)
-                                Text("/5", style = MaterialTheme.typography.labelSmall)
-                            }
-                            Spacer(Modifier.padding(8.dp))
-                            Column {
-                                Text("Stability", style = MaterialTheme.typography.titleMedium)
-                                Text(stability.interpretation, style = MaterialTheme.typography.bodyLarge)
-                                VGap(6)
-                                FilledTonalButton(onClick = onOpenCheckin) {
-                                    Text(if (s.checkinDone) "Edit check-in" else "Morning check-in")
-                                }
-                            }
-                        }
-                        VGap(12)
-                        Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                            Metric("HRV", s.hrv?.let { "%.0f ms".format(it) } ?: "—")
-                            Metric("RHR", s.rhr?.let { "$it bpm" } ?: "—")
-                            Metric("Sleep", s.sleepHours?.let { "%.1f h".format(it) } ?: "—")
-                        }
-                        VGap(8)
-                        FilledTonalButton(onClick = { showWhy = true }) { Text("Explain score") }
+                    }
+                }
+                VGap(12)
+                Row(horizontalArrangement = Arrangement.spacedBy(22.dp)) {
+                    Metric("HRV", s.hrv?.let { "%.0f".format(it) } ?: "—", "ms")
+                    Metric("Resting HR", s.rhr?.let { "$it" } ?: "—", "bpm")
+                    Metric("Sleep", s.sleepHours?.let { "%.1f".format(it) } ?: "—", "h")
+                }
+                VGap(12)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalButton(onClick = onOpenCheckin) {
+                        Text(if (s.checkinDone) "Edit check-in" else "Check in")
+                    }
+                    if (stability != null && !stability.calibrating) {
+                        FilledTonalButton(onClick = { showWhy = true }) { Text("Why?") }
                     }
                 }
             }
         }
 
-        // ---- PacePoints ----
-        item {
-            Card {
-                Column(Modifier.padding(16.dp)) {
+        // ---- Trend ----
+        if (s.history.size >= 2) {
+            item {
+                SoftCard {
                     Row(
                         Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Column {
-                            Text("PacePoints", style = MaterialTheme.typography.titleMedium)
-                            Text("%.1f of %.0f used".format(s.pacing.points, s.budget))
-                        }
-                        ScoreRing(
-                            fraction = (s.pacing.points / s.budget).toFloat(),
-                            diameter = 76,
-                            color = MaterialTheme.colorScheme.secondary,
-                            trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                        ) {
-                            Text(
-                                "%.0f%%".format(100 * (s.pacing.points / s.budget).coerceIn(0.0, 1.0)),
-                                style = MaterialTheme.typography.labelMedium,
-                            )
-                        }
+                        Text("Last 7 days", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Stability",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                     VGap(8)
-                    Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                        Metric("Activity", "${s.pacing.activityMinutes} min")
-                        Metric("Exertion", "${s.pacing.exertionMinutes} min")
-                        Metric("Peak", if (s.pacing.peakBpm > 0) "${s.pacing.peakBpm} bpm" else "—")
-                    }
+                    Sparkline(
+                        values = s.history.takeLast(7).map { it.stability.toDouble() },
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                        fill = true,
+                    )
+                    VGap(12)
+                    Text(
+                        "PacePoints",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Sparkline(
+                        values = s.history.takeLast(7).map { it.pacePoints },
+                        color = Visible.activity,
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                        fill = true,
+                    )
                     VGap(10)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            Modifier.background(zoneColor(zone, false), RoundedCornerShape(50))
-                                .padding(horizontal = 10.dp, vertical = 4.dp)
-                        ) {
-                            Text(
-                                if (live && s.hr.bpm != null) "${s.hr.bpm} bpm · ${zone.lowercase()}" else "Live HR off",
-                                color = Color.White,
-                                style = MaterialTheme.typography.labelMedium,
-                            )
-                        }
-                        Spacer(Modifier.padding(4.dp))
-                        FilledTonalButton(onClick = if (s.hr.connected) vm::stopLive else vm::startLive) {
-                            Text(if (s.hr.connected) "Stop live" else "Start live HR")
-                        }
-                    }
-                    if (!live) {
-                        VGap(6)
-                        Text(
-                            "Turn on Broadcast Heart Rate in the WHOOP app, then start live HR here.",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
+                    FilledTonalButton(onClick = onOpenHistory) { Text("Open history") }
                 }
-            }
-        }
-
-        // ---- History preview ----
-        item {
-            Card {
-                Column(Modifier.padding(16.dp)) {
-                    SectionHeader("Last 7 days", trailing = "Stability")
-                    if (s.history.size < 2) {
-                        Text("History appears after your first sync.", style = MaterialTheme.typography.bodySmall)
-                    } else {
-                        Sparkline(
-                            values = s.history.takeLast(7).map { it.stability.toDouble() },
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.fillMaxWidth().height(56.dp),
-                            fill = true,
-                        )
-                        VGap(12)
-                        Sparkline(
-                            values = s.history.takeLast(7).map { it.pacePoints },
-                            color = MaterialTheme.colorScheme.secondary,
-                            modifier = Modifier.fillMaxWidth().height(56.dp),
-                            fill = true,
-                        )
-                        VGap(8)
-                        FilledTonalButton(onClick = onOpenHistory) { Text("Open history") }
-                    }
-                }
-            }
-        }
-
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onOpenLive, modifier = Modifier.weight(1f)) { Text("Pacing screen") }
-                FilledTonalButton(onClick = onOpenSettings, modifier = Modifier.weight(1f)) { Text("Settings") }
             }
         }
 
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(onClick = onOpenLogs, modifier = Modifier.weight(1f)) { Text("Logs") }
-                FilledTonalButton(onClick = onOpenMonthly, modifier = Modifier.weight(1f)) { Text("Monthly check-in") }
+                FilledTonalButton(onClick = onOpenLive, modifier = Modifier.weight(1f)) { Text("Pacing") }
+                FilledTonalButton(onClick = onOpenMonthly, modifier = Modifier.weight(1f)) { Text("Monthly") }
             }
         }
 
-        item { Spacer(Modifier.height(24.dp)) }
+        item { Spacer(Modifier.height(28.dp)) }
     }
 
     if (showWhy) {
         ModalBottomSheet(onDismissRequest = { showWhy = false }, sheetState = sheet) {
             val st = s.stability
-            Column(Modifier.padding(20.dp).padding(bottom = 24.dp)) {
+            Column(Modifier.padding(20.dp).padding(bottom = 28.dp)) {
                 Text("Why this score", style = MaterialTheme.typography.titleLarge)
-                VGap(12)
+                VGap(14)
                 if (st == null) {
                     Text("No overnight data.")
                 } else {
-                    WhyRow("HRV z-score", st.zHrv?.let { "%.2f".format(it) } ?: "—",
+                    WhyRow("HRV", st.zHrv?.let { "%+.2f" .format(it) } ?: "—",
                         "Negative is better — HRV above your normal range")
-                    WhyRow("Resting HR z-score", st.zRhr?.let { "%.2f".format(it) } ?: "—",
+                    WhyRow("Resting HR", st.zRhr?.let { "%+.2f".format(it) } ?: "—",
                         "Positive is worse — RHR above your normal range")
-                    WhyRow("Sleep quality", "%.2f".format(st.sleepTerm), "From your morning check-in")
-                    WhyRow("Symptoms", "%.2f".format(st.symptomTerm), "From your morning check-in")
-                    VGap(8)
+                    WhyRow("Sleep quality", "%+.2f".format(st.sleepTerm), "From your check-in")
+                    WhyRow("Symptoms", "%+.2f".format(st.symptomTerm), "From your check-in")
+                    VGap(10)
                     Text(
-                        "Combined deviation %.2f over %d nights of baseline".format(st.deviation, st.baselineNights),
+                        "Combined deviation %+.2f over %d nights".format(st.deviation, st.baselineNights),
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     VGap(8)
                     Text(
                         "Weights and cut points are yours to tune in Settings — Visible does not publish its formula.",
                         style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -291,20 +407,61 @@ fun TodayScreen(
     }
 }
 
+private fun stabilityColor(score: Int): Color = when {
+    score >= 5 -> Visible.mintDeep
+    score == 4 -> Color(0xFF6BBF9A)
+    score == 3 -> Visible.activity
+    score == 2 -> Color(0xFFE0975F)
+    else -> Visible.exertion
+}
+
 @Composable
-private fun Metric(label: String, value: String) {
+private fun ZoneStat(label: String, value: String, color: Color) {
     Column {
-        Text(label, style = MaterialTheme.typography.labelSmall)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(7.dp).clip(CircleShape).background(color))
+            Spacer(Modifier.size(5.dp))
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         Text(value, style = MaterialTheme.typography.titleSmall)
     }
 }
 
 @Composable
+private fun Metric(label: String, value: String, unit: String) {
+    Column {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(value, style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.size(2.dp))
+            Text(
+                unit,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(bottom = 2.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
 private fun WhyRow(label: String, value: String, hint: String) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), horizontalArrangement = Arrangement.SpaceBetween) {
         Column(Modifier.weight(1f)) {
             Text(label, style = MaterialTheme.typography.bodyMedium)
-            Text(hint, style = MaterialTheme.typography.bodySmall)
+            Text(
+                hint,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         Text(value, style = MaterialTheme.typography.titleMedium)
     }

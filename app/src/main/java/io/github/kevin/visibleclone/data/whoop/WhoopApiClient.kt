@@ -12,17 +12,17 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
-import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.longOrNull
 import java.io.IOException
 import java.net.URLEncoder
 import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 
 /**
  * Thin WHOOP REST client. Parses into domain entities directly; there is no separate DTO layer
@@ -34,6 +34,10 @@ class WhoopApiClient(
     private val transport: HttpTransport = HttpTransport(),
 ) {
     private val base = "https://api.prod.whoop.com/developer"
+
+    /** WHOOP documents RFC 3339 with millisecond precision; Instant.toString() emits microseconds. */
+    private val instantFormat: DateTimeFormatter =
+        DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC)
     private val json = Json { ignoreUnknownKeys = true }
 
     /** Serializes refresh: a successful refresh invalidates the previous token pair. */
@@ -79,7 +83,7 @@ class WhoopApiClient(
         return BodyMeasurement(
             heightMeter = o["height_meter"]?.jsonPrimitive?.doubleOrNull,
             weightKilogram = o["weight_kilogram"]?.jsonPrimitive?.doubleOrNull,
-            maxHeartRate = o["max_heart_rate"]?.jsonPrimitive?.intOrNull,
+            maxHeartRate = o["max_heart_rate"]?.jsonPrimitive?.doubleOrNull?.toInt(),
         )
     }
 
@@ -100,20 +104,23 @@ class WhoopApiClient(
             val query = buildString {
                 append(path).append('?')
                 append("limit=25")
-                start?.let { append("&start=").append(URLEncoder.encode(it.toString(), "UTF-8")) }
-                end?.let { append("&end=").append(URLEncoder.encode(it.toString(), "UTF-8")) }
+                start?.let { append("&start=").append(URLEncoder.encode(instantFormat.format(it), "UTF-8")) }
+                end?.let { append("&end=").append(URLEncoder.encode(instantFormat.format(it), "UTF-8")) }
                 next?.let { append("&nextToken=").append(URLEncoder.encode(it, "UTF-8")) }
             }
+            android.util.Log.d("WhoopApi", "GET $base$query")
             val o = getJson(query)
             (o["records"] as? JsonArray)?.forEach { rec -> map(rec.jsonObject)?.let { out += it } }
-            next = o["next_token"]?.jsonPrimitive?.content
+            // A JSON null arrives as the *string* "null" when read via .content — treat it as absent.
+            next = o["next_token"]?.jsonPrimitive?.contentOrNull
+                ?.takeIf { it.isNotBlank() && it != "null" }
             if (next.isNullOrBlank()) break
         }
         return out
     }
 
     suspend fun cycles(start: Instant?, end: Instant?): List<CycleEntity> = collectPages("/v2/cycle", start, end) { o ->
-        val score = o["score"]?.jsonObject
+        val score = o.obj("score")
         CycleEntity(
             id = o.str("id") ?: return@collectPages null,
             start = o.str("start") ?: "",
@@ -127,7 +134,7 @@ class WhoopApiClient(
 
     suspend fun recoveries(start: Instant?, end: Instant?): List<RecoveryEntity> =
         collectPages("/v2/recovery", start, end) { o ->
-            val score = o["score"]?.jsonObject
+            val score = o.obj("score")
             RecoveryEntity(
                 cycleId = o.str("cycle_id") ?: "",
                 sleepId = o.str("sleep_id"),
@@ -142,8 +149,8 @@ class WhoopApiClient(
 
     suspend fun sleeps(start: Instant?, end: Instant?): List<SleepEntity> =
         collectPages("/v2/activity/sleep", start, end) { o ->
-            val score = o["score"]?.jsonObject
-            val stages = score?.get("stage_summary")?.jsonObject
+            val score = o.obj("score")
+            val stages = score?.obj("stage_summary")
             SleepEntity(
                 id = o.str("id") ?: "",
                 cycleId = o.str("cycle_id"),
@@ -164,7 +171,8 @@ class WhoopApiClient(
 
     suspend fun workouts(start: Instant?, end: Instant?): List<WorkoutEntity> =
         collectPages("/v2/activity/workout", start, end) { o ->
-            val score = o["score"]?.jsonObject
+            val score = o.obj("score")
+            val zones = score?.obj("zone_durations")
             WorkoutEntity(
                 id = o.str("id") ?: "",
                 start = o.str("start") ?: "",
@@ -173,13 +181,25 @@ class WhoopApiClient(
                 strain = score?.num("strain"),
                 avgHeartRate = score?.int("average_heart_rate"),
                 maxHeartRate = score?.int("max_heart_rate"),
+                zone0Ms = zones?.long("zone_zero_milli"),
+                zone1Ms = zones?.long("zone_one_milli"),
+                zone2Ms = zones?.long("zone_two_milli"),
+                zone3Ms = zones?.long("zone_three_milli"),
+                zone4Ms = zones?.long("zone_four_milli"),
+                zone5Ms = zones?.long("zone_five_milli"),
             ).takeIf { it.id.isNotBlank() }
         }
 }
 
 // ---------- JSON helpers ----------
 
-private fun JsonObject.str(k: String): String? = this[k]?.jsonPrimitive?.content?.takeIf { it != "null" }
+/** Safe nested object lookup: scored records may carry `"score": null`. */
+private fun JsonObject.obj(k: String): JsonObject? = this[k] as? JsonObject
+
+private fun JsonObject.str(k: String): String? = this[k]?.jsonPrimitive?.contentOrNull?.takeIf { it != "null" }
 private fun JsonObject.num(k: String): Double? = this[k]?.jsonPrimitive?.doubleOrNull
-private fun JsonObject.int(k: String): Int? = this[k]?.jsonPrimitive?.intOrNull
-private fun JsonObject.long(k: String): Long? = this[k]?.jsonPrimitive?.longOrNull
+
+// WHOOP returns some nominally-integer fields as floats (e.g. resting_heart_rate: 54.0).
+// intOrNull/longOrNull reject those, so go through Double and truncate.
+private fun JsonObject.int(k: String): Int? = this[k]?.jsonPrimitive?.doubleOrNull?.toInt()
+private fun JsonObject.long(k: String): Long? = this[k]?.jsonPrimitive?.doubleOrNull?.toLong()

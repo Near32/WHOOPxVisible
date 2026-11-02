@@ -13,6 +13,20 @@ Run on 2026-11-02, Linux, JDK 21, Android SDK 35/36.
 ./gradlew :app:assembleDebug   -> BUILD SUCCESSFUL
 ```
 
+## Verified on device (emulator, API 36, real WHOOP account)
+
+- Sign-in: OAuth + PKCE completed against the live WHOOP identity provider; consent lists all six
+  scopes plus the privacy-policy link.
+- Sync: 91 cycles, 90 recoveries, 99 sleeps, 428 workouts; incremental and full-backfill paths both
+  exercised. 310 workouts carried `zone_durations`.
+- Stability: 5/5 from real overnight HRV 63 ms / RHR 47 bpm, 90-night baseline.
+- PacePoints: 11.4 of 14 from two logged activities (chess 175 min zone 0, dog-walking 41 min zone 0).
+
+Bugs found and fixed by running it: `next_token: null` parsed as the string "null"; `"score": null`
+throwing on `.jsonObject`; `intOrNull` rejecting `54.0` (null resting HR); incremental sync never
+refetching stale rows; UTC-vs-local cycle date comparison; Room schema version not bumped; and
+per-minute rates ~20x too large against the budget.
+
 ## Not yet verified (requires the user's hardware)
 
 1. **WHOOP sign-in.** Needs a real client id/secret in `local.properties` and a device/browser to

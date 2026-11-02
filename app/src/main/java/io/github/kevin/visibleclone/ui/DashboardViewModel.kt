@@ -42,6 +42,11 @@ data class DashboardState(
     val stability: StabilityResult? = null,
     val checkinDone: Boolean = false,
     val pacing: PaceBreakdown = PaceBreakdown(0.0, 0, 0, 0, 0),
+    val pacingEstimated: Boolean = false,
+    val pacingFromZones: Boolean = false,
+    val workoutsToday: Int = 0,
+    /** Today's intraday HR readings, for the HR chart. Empty when no live source is running. */
+    val todayHr: List<Int> = emptyList(),
     val budget: Double = 14.0,
     val config: PacingConfig = PacingConfig(),
     val sleepHours: Double? = null,
@@ -51,6 +56,7 @@ data class DashboardState(
     val hr: HrState = HrState(),
     val connectedToWhoop: Boolean = false,
     val syncError: String? = null,
+    val needsReauth: Boolean = false,
     val syncing: Boolean = false,
     val maxHeartRate: Int = 185,
 )
@@ -83,14 +89,35 @@ class DashboardViewModel(private val app: App) : ViewModel() {
             local.update { it.copy(syncing = true, syncError = null) }
             if (app.settings.currentTokens() != null) {
                 runCatching { app.sync.sync() }
-                    .onFailure { e -> local.update { it.copy(syncError = e.message) } }
+                    .onFailure { e ->
+                        android.util.Log.e("WhoopSync", "sync failed", e)
+                        if (isSessionExpired(e)) {
+                            // The refresh token is dead; nothing will work until the user signs in.
+                            app.settings.clearTokens()
+                            local.update {
+                                it.copy(
+                                    syncError = "Your WHOOP session expired. Sign in again to keep syncing.",
+                                    needsReauth = true,
+                                    connectedToWhoop = false,
+                                )
+                            }
+                        } else {
+                            local.update { it.copy(syncError = e.message) }
+                        }
+                    }
             }
             recompute()
             local.update { it.copy(syncing = false) }
         }
     }
 
-    private suspend fun recompute() {
+    private fun isSessionExpired(e: Throwable): Boolean {
+        if (e is io.github.kevin.visibleclone.data.whoop.UnauthorizedException) return true
+        val m = e.message.orEmpty().lowercase()
+        return "invalid_grant" in m || "401" in m || "unauthorized" in m
+    }
+
+    suspend fun recompute() {
         val cfg = app.settings.currentConfig()
         val dao = app.db.dao()
         val recoveries = dao.allRecoveries()
@@ -134,12 +161,54 @@ class DashboardViewModel(private val app: App) : ViewModel() {
             if (hc.size > bleHr.size) hc else bleHr
         }
 
-        val pacing = PacePoints.compute(samples, rhr, maxHr, cfg)
+        // The current cycle is the one WHOOP has not closed yet. Comparing dates is unreliable:
+        // cycle.start is UTC and can land on the previous local day.
+        val todayCycle = cycles.lastOrNull { it.end == null } ?: cycles.lastOrNull()
+        val dayIsoStart = java.time.Instant.ofEpochMilli(dayStart).toString()
+        val dayIsoEnd = java.time.Instant.ofEpochMilli(dayStart + 86_400_000L).toString()
+        val todaysWorkoutCount = app.db.dao().workoutsBetween(dayIsoStart, dayIsoEnd).size
+        val pacing: PaceBreakdown
+        var estimated = false
+        var zoneDerived = false
+        if (samples.isNotEmpty()) {
+            pacing = PacePoints.compute(samples, rhr, maxHr, cfg)
+        } else {
+            // No live HR (BLE / Health Connect). Use WHOOP's own measured zone durations from the
+            // activities logged today — real intraday zone time beats any average-HR guess.
+            val todaysWorkouts = app.db.dao().workoutsBetween(dayIsoStart, dayIsoEnd)
+            val zoned = todaysWorkouts.filter { it.hasZoneData }
+            if (zoned.isNotEmpty()) {
+                val perZone = (0..5).map { z ->
+                    zoned.sumOf { it.zoneDurationsMs()[z] ?: 0L }
+                }
+                pacing = PacePoints.fromZoneDurations(perZone, rhr, maxHr, cfg)
+                estimated = false
+                zoneDerived = true
+            } else {
+                val elapsedHours = ((System.currentTimeMillis() - dayStart) / 3_600_000.0)
+                    .coerceIn(0.0, 16.0)
+                val avg = todayCycle?.avgHeartRate ?: rhr
+                val points = PacePoints.rateAt(avg, rhr, maxHr, cfg) * elapsedHours * 60
+                pacing = PaceBreakdown(points, 0, 0, 0, todayCycle?.maxHeartRate ?: 0)
+                estimated = true
+            }
+        }
 
         val tonight = sleeps.lastOrNull { it.start.take(10) <= today }
         val sleepHours = tonight?.inBedMs?.let { (it - (tonight.awakeMs ?: 0L)) / 3_600_000.0 }
 
-        val history = buildHistory(cycles, recoveries, sleeps, samples, rhr, maxHr, cfg)
+        val workouts = app.db.dao().workoutsBetween(
+            java.time.Instant.ofEpochMilli(dayStart - 90L * 86_400_000L).toString(),
+            java.time.Instant.ofEpochMilli(dayStart + 86_400_000L).toString(),
+        )
+        val zonesByDay: Map<String, List<Long>> = workouts
+            .filter { it.hasZoneData }
+            .groupBy { it.start.take(10) }
+            .mapValues { (_, ws) ->
+                (0..5).map { z -> ws.sumOf { it.zoneDurationsMs()[z] ?: 0L } }
+            }
+
+        val history = buildHistory(cycles, recoveries, sleeps, samples, rhr, maxHr, cfg, zonesByDay)
 
         local.update {
             it.copy(
@@ -147,6 +216,10 @@ class DashboardViewModel(private val app: App) : ViewModel() {
                 stability = stability,
                 checkinDone = checkin != null,
                 pacing = pacing,
+                pacingEstimated = estimated,
+                pacingFromZones = zoneDerived,
+                todayHr = samples.takeLast(180).map { it.bpm },
+                workoutsToday = todaysWorkoutCount,
                 budget = budget,
                 sleepHours = sleepHours,
                 hrv = todaysRecovery?.hrvRmssd,
@@ -170,6 +243,7 @@ class DashboardViewModel(private val app: App) : ViewModel() {
         rhr: Int,
         maxHr: Int,
         cfg: PacingConfig,
+        zonesByDay: Map<String, List<Long>> = emptyMap(),
     ): List<DayPoint> {
         val recByCycle = recoveries.associateBy { it.cycleId }
         val sleepByCycle = sleeps.filter { !it.nap }.associateBy { it.cycleId }
@@ -186,8 +260,12 @@ class DashboardViewModel(private val app: App) : ViewModel() {
             } else 3
 
             val isToday = cycle.start.take(10) == LocalDate.now(zone).toString()
+            val zones = zonesByDay[cycle.start.take(10)]
             val points = if (isToday && todaySamples.isNotEmpty()) {
                 PacePoints.compute(todaySamples, rhr, maxHr, cfg).points
+            } else if (zones != null && zones.any { it > 0 }) {
+                // Real measured time-in-zone from the activities logged that day.
+                PacePoints.fromZoneDurations(zones, rhr, maxHr, cfg).points
             } else {
                 // Estimate: assume the day's mean HR held for the waking hours.
                 val awakeHours = ((sleep?.inBedMs ?: 0L) / 3_600_000.0).let { if (it <= 0) 16.0 else 24 - it }

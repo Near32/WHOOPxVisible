@@ -83,9 +83,27 @@ f(hr) = 0                                     if hr <  HR_activity
 pacePoints = sum over minutes f(hr)
 ```
 
-Defaults `c1 = 1`, `c2 = 3`, `alpha = 0.05`. `RHR` = today's resting HR from WHOOP recovery;
+Defaults `c1 = 1`, `c2 = 3`, `alpha = 0.05`, plus a global `zoneScale = 0.05`.
+
+`zoneScale` exists because the doc's `c1 = 1` point/minute is illustrative and produces absurd
+totals: a 3-hour chess session measured as 175 minutes in WHOOP zone 0 scored 172 points against a
+14-point budget. At 0.05, an hour of activity costs ~3 points, so a real active day (2h chess +
+40m dog walk ≈ 220 activity minutes) lands at ~11 of 14 — the intended behaviour. Tune it after a
+week of real days. `RHR` = today's resting HR from WHOOP recovery;
 `HRmax` = WHOOP body measurement `max_heart_rate`, falling back to `220 - age` from the profile or
 a manual override.
+
+### Using WHOOP's measured zone durations
+
+When a day has logged activities, prefer their real `zone_durations` over any average-HR estimate.
+Each zone is charged at its midpoint (fraction of max HR: 0.45/0.55/0.65/0.75/0.85/0.95):
+
+```
+points += rateAt(midpoint_bpm) * zone_minutes
+```
+
+This applies to both today and historical days. Estimation from the day's average HR is used only
+when no zone data exists at all.
 
 ### Daily budget from Stability
 

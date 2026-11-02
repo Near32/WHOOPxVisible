@@ -75,6 +75,24 @@ plus `offline`. (`whoop-partner/token` is a trusted-partner scope, not for us.)
 Collections take `limit` (max **25**, default 10), `start`, `end` (defaults to now), `nextToken`.
 Response: `{ records: [...], next_token }`.
 
+### Intraday zone data (important)
+
+Individual workouts **do** carry real time-in-zone data:
+
+```
+score.zone_durations = {
+  zone_zero_milli … zone_five_milli
+}
+```
+
+That is measured milliseconds spent in each of WHOOP's six HR zones for that activity — not an
+average. WHOOP zone boundaries are fractions of **maximum heart rate** (roughly 50/60/70/80/90%),
+not of heart-rate reserve.
+
+So for users who log activities in WHOOP, the app has genuine partial-coverage intraday data:
+exact zone time for the periods they tagged. It is not a continuous stream (untagged time is absent),
+but it is far better than a daily average for PacePoints.
+
 ## What is NOT available
 
 - **No intraday / continuous heart-rate endpoint.** HR only appears as `average_heart_rate` and

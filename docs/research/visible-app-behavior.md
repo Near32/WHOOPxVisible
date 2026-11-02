@@ -23,7 +23,14 @@ This is what the app should *feel* like, independent of the exact formulas (thos
 
 ## Screens and their content
 
-### Today
+### Today (redesigned to match Visible's Feb 2026 layout)
+
+Order is PacePoints arc → heart rate → stability → trend, per Visible's updated Today page.
+
+- **PacePoints arc**: semicircular arc filling as points accumulate, with a white **PaceSetter** dot
+  showing where an evenly-paced day would be at the current time. Spent total and budget sit inside.
+- **Heart rate**: current bpm with zone pill, a zone-banded line, and the live HR toggle.
+- Zone breakdown (Rest / Activity / Exertion minutes) with colour dots underneath the arc.
 - Stability Score: big number 1–5, one-line interpretation ("steady", "a little strained",
   "take it gently"), and the seven-day band showing the personal normal range.
 - PacePoints: a ring, `used / budget`, with the today's zone breakdown underneath.
