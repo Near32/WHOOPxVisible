@@ -1,8 +1,8 @@
-# Privacy Policy — Visible Clone
+# Privacy Policy — WHOOPxVisible
 
 **Last updated: 2 November 2026**
 
-Visible Clone is a personal Android application that reads wearable data from the WHOOP API and
+WHOOPxVisible is a personal Android application that reads wearable data from the WHOOP API and
 optionally from Android Health Connect, and turns it into pacing scores. This policy explains what
 the app does with that data.
 
@@ -44,7 +44,7 @@ Google's backup services.
 
 ## Not a medical device
 
-Visible Clone is a personal wellbeing and pacing aid. It is not a medical device, it does not
+WHOOPxVisible is a personal wellbeing and pacing aid. It is not a medical device, it does not
 diagnose any condition, and it does not predict or prevent crashes or symptom flares. Do not use it
 in place of advice from a clinician.
 
@@ -60,4 +60,4 @@ date.
 ## Contact
 
 Questions about this policy: open an issue at
-https://github.com/Near32/visible-clone/issues
+https://github.com/Near32/WHOOPxVisible/issues

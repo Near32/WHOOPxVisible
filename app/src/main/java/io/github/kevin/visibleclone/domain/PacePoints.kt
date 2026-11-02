@@ -135,6 +135,78 @@ object PacePoints {
         return PaceBreakdown(points, restMin, actMin, excMin, peak)
     }
 
+    /** A logged activity and its measured time-in-zone, as stored from WHOOP. */
+    data class ZonedActivity(
+        val startMs: Long,
+        val endMs: Long,
+        val zoneMillis: List<Long?>,
+    )
+
+    /**
+     * Combines live HR samples with logged activities.
+     *
+     * These cover different time windows and must not be treated as alternatives: a day can have
+     * three hours of tagged activity in the morning and live HR in the afternoon. Where live samples
+     * cover an activity's window we trust the samples (finer resolution) and drop that share of the
+     * activity's zone points; uncovered portions keep their measured zone time.
+     */
+    fun combine(
+        samples: List<HrSample>,
+        activities: List<ZonedActivity>,
+        restingHr: Int,
+        maxHr: Int,
+        config: PacingConfig,
+        gapMs: Long = 120_000,
+    ): PaceBreakdown {
+        val live = compute(samples, restingHr, maxHr, config)
+        if (activities.isEmpty()) return live
+
+        val intervals = coverageIntervals(samples, gapMs)
+
+        var points = live.points
+        var rest = live.restingMinutes
+        var act = live.activityMinutes
+        var exc = live.exertionMinutes
+        var peak = live.peakBpm
+
+        activities.forEach { a ->
+            val duration = (a.endMs - a.startMs).coerceAtLeast(1L)
+            val covered = intervals.sumOf { (s, e) ->
+                (minOf(e, a.endMs) - maxOf(s, a.startMs)).coerceAtLeast(0L)
+            }.coerceAtMost(duration)
+            val uncoveredFraction = 1.0 - covered.toDouble() / duration
+            if (uncoveredFraction <= 0.0) return@forEach
+
+            val z = fromZoneDurations(a.zoneMillis, restingHr, maxHr, config)
+            points += z.points * uncoveredFraction
+            rest += (z.restingMinutes * uncoveredFraction).toInt()
+            act += (z.activityMinutes * uncoveredFraction).toInt()
+            exc += (z.exertionMinutes * uncoveredFraction).toInt()
+            peak = maxOf(peak, z.peakBpm)
+        }
+
+        return PaceBreakdown(points, rest, act, exc, peak)
+    }
+
+    /** Merged [start, end] spans where samples were arriving without a gap longer than [gapMs]. */
+    fun coverageIntervals(samples: List<HrSample>, gapMs: Long): List<Pair<Long, Long>> {
+        if (samples.isEmpty()) return emptyList()
+        val sorted = samples.sortedBy { it.timestampMs }
+        val out = mutableListOf<Pair<Long, Long>>()
+        var start = sorted[0].timestampMs
+        var prev = start
+        for (i in 1 until sorted.size) {
+            val ts = sorted[i].timestampMs
+            if (ts - prev > gapMs) {
+                out += start to prev
+                start = ts
+            }
+            prev = ts
+        }
+        out += start to prev
+        return out
+    }
+
     enum class Zone { RESTING, ACTIVITY, EXERTION }
 
     fun zoneAt(bpm: Int, restingHr: Int, maxHr: Int, config: PacingConfig): Zone {

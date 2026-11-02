@@ -1,4 +1,4 @@
-# Visible Clone (for WHOOP)
+# WHOOPxVisible
 
 A personal Android app that recreates [Visible](https://www.makevisible.com/)'s pacing model on top of
 a WHOOP strap plus Fitbit data via Health Connect. Two scores:
@@ -9,7 +9,7 @@ a WHOOP strap plus Fitbit data via Health Connect. Two scores:
   cross your exertion threshold.
 
 Design and research notes are in [`docs/research/`](docs/research/).
-Privacy policy: [PRIVACY.md](https://github.com/Near32/visible-clone/blob/main/PRIVACY.md)
+Privacy policy: [PRIVACY.md](https://github.com/Near32/WHOOPxVisible/blob/main/PRIVACY.md)
 
 ## What actually works where
 

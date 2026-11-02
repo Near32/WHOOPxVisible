@@ -55,6 +55,9 @@ class HrBroadcastService : Service() {
         val HEART_RATE_MEASUREMENT: UUID = UUID.fromString("00002a37-0000-1000-8000-00805f9b34fb")
         val CLIENT_CHARACTERISTIC_CONFIG: UUID =
             UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+        // Standard Bluetooth SIG Battery Service — exposed by the strap on the same connection.
+        val BATTERY_SERVICE: UUID = UUID.fromString("0000180f-0000-1000-8000-00805f9b34fb")
+        val BATTERY_LEVEL: UUID = UUID.fromString("00002a19-0000-1000-8000-00805f9b34fb")
 
         private const val CHANNEL_ID = "hr_broadcast"
         private const val ALERT_CHANNEL_ID = "pacing_alerts"
@@ -246,6 +249,7 @@ class HrBroadcastService : Service() {
                 }
             }
             state.value = state.value.copy(status = "Receiving heart rate")
+            readBattery(g)
         }
 
         override fun onCharacteristicChanged(
@@ -253,13 +257,43 @@ class HrBroadcastService : Service() {
             characteristic: BluetoothGattCharacteristic,
             value: ByteArray,
         ) {
-            onHrPayload(value)
+            if (characteristic.uuid == BATTERY_LEVEL) {
+                onBatteryPayload(value)
+            } else {
+                onHrPayload(value)
+            }
+        }
+
+        override fun onCharacteristicRead(
+            g: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray,
+            status: Int,
+        ) {
+            if (characteristic.uuid == BATTERY_LEVEL && status == BluetoothGatt.GATT_SUCCESS) {
+                onBatteryPayload(value)
+            }
         }
 
         @Deprecated("Android <13 callback")
         override fun onCharacteristicChanged(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
             @Suppress("DEPRECATION")
-            onHrPayload(characteristic.value ?: return)
+            val value = characteristic.value ?: return
+            if (characteristic.uuid == BATTERY_LEVEL) onBatteryPayload(value) else onHrPayload(value)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun readBattery(g: BluetoothGatt) {
+        val ch = g.getService(BATTERY_SERVICE)?.getCharacteristic(BATTERY_LEVEL) ?: return
+        g.readCharacteristic(ch)
+    }
+
+    private fun onBatteryPayload(value: ByteArray) {
+        if (value.isEmpty()) return
+        val pct = value[0].toInt() and 0xFF
+        if (pct in 0..100) {
+            state.value = state.value.copy(batteryPercent = pct)
         }
     }
 
@@ -335,6 +369,7 @@ class HrBroadcastService : Service() {
 data class HrState(
     val connected: Boolean = false,
     val bpm: Int? = null,
+    val batteryPercent: Int? = null,
     val lastUpdateMs: Long = 0,
     val status: String = "Idle",
     val deviceName: String? = null,

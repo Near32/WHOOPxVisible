@@ -62,7 +62,7 @@ CONTACTS
 
 PRIVACY POLICY
 
-https://raw.githubusercontent.com/Near32/visible-clone/main/PRIVACY.md
+https://raw.githubusercontent.com/Near32/WHOOPxVisible/main/PRIVACY.md
 
 REDIRECT URLS
 

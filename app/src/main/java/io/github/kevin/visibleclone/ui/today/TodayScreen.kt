@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -220,12 +221,19 @@ fun TodayScreen(
                             )
                         }
                     }
-                    if (s.history.isNotEmpty()) {
-                        Text(
-                            "Peak ${s.pacing.peakBpm.takeIf { it > 0 } ?: "—"}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    Column(horizontalAlignment = Alignment.End) {
+                        if (s.history.isNotEmpty()) {
+                            Text(
+                                "Peak ${s.pacing.peakBpm.takeIf { it > 0 } ?: "—"}",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        // Strap battery, read from the standard BLE Battery Service.
+                        s.hr.batteryPercent?.let { pct ->
+                            Spacer(Modifier.size(3.dp))
+                            BatteryPill(pct)
+                        }
                     }
                 }
                 VGap(10)
@@ -488,5 +496,37 @@ private fun WhyRow(label: String, value: String, hint: String) {
             )
         }
         Text(value, style = MaterialTheme.typography.titleMedium)
+    }
+}
+
+
+/** Small battery indicator; green above 40%, amber 15-40%, coral below 15%. */
+@Composable
+private fun BatteryPill(percent: Int) {
+    val color = when {
+        percent >= 40 -> Visible.mintDeep
+        percent >= 15 -> Visible.activity
+        else -> Visible.exertion
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier.size(width = 22.dp, height = 11.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(color.copy(alpha = 0.18f))
+                .padding(1.5.dp),
+        ) {
+            Box(
+                Modifier.fillMaxHeight()
+                    .fillMaxWidth(percent / 100f)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(color),
+            )
+        }
+        Spacer(Modifier.size(3.dp))
+        Text(
+            "$percent%",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }

@@ -141,9 +141,14 @@ class DashboardViewModel(private val app: App) : ViewModel() {
                 val slot = ((ordered[i].timestampMs - dayStart) / (15 * 60_000L)).toInt()
                 if (slot in 0..95) slots[slot] += pts.toFloat()
             }
-        } else if (workoutsToday > 0) {
+        }
+
+        // Activities always contribute. Where live samples cover the same window, the sample
+        // contribution already counted it, so only the uncovered share is added.
+        if (workoutsToday > 0) {
             val iso = java.time.Instant.ofEpochMilli(dayStart).toString()
             val endIso = java.time.Instant.ofEpochMilli(dayStart + 86_400_000L).toString()
+            val coverage = PacePoints.coverageIntervals(samples, 120_000)
             dao.workoutsBetween(iso, endIso).filter { it.hasZoneData }.forEach { w ->
                 val pts = PacePoints.fromZoneDurations(w.zoneDurationsMs(), rhr, maxHr, cfg).points
                 if (pts <= 0.0) return@forEach
@@ -152,11 +157,18 @@ class DashboardViewModel(private val app: App) : ViewModel() {
                 val e = runCatching { java.time.Instant.parse(w.end).toEpochMilli() }.getOrNull()
                     ?: (s + 60_000L)
                 val duration = (e - s).coerceAtLeast(60_000L)
+                val covered = coverage.sumOf { (cs, ce) ->
+                    (minOf(ce, e) - maxOf(cs, s)).coerceAtLeast(0L)
+                }.coerceAtMost(duration)
+                val uncovered = 1.0 - covered.toDouble() / duration
+                if (uncovered <= 0.0) return@forEach
                 for (i in 0..95) {
                     val slotStart = dayStart + i * 15 * 60_000L
                     val slotEnd = slotStart + 15 * 60_000L
                     val overlap = (minOf(e, slotEnd) - maxOf(s, slotStart)).coerceAtLeast(0L)
-                    if (overlap > 0) slots[i] += (pts * overlap / duration).toFloat()
+                    if (overlap > 0) {
+                        slots[i] += (pts * overlap / duration * uncovered).toFloat()
+                    }
                 }
             }
         }
@@ -220,22 +232,28 @@ class DashboardViewModel(private val app: App) : ViewModel() {
         val todayCycle = cycles.lastOrNull { it.end == null } ?: cycles.lastOrNull()
         val dayIsoStart = java.time.Instant.ofEpochMilli(dayStart).toString()
         val dayIsoEnd = java.time.Instant.ofEpochMilli(dayStart + 86_400_000L).toString()
-        val todaysWorkoutCount = app.db.dao().workoutsBetween(dayIsoStart, dayIsoEnd).size
+        val todaysWorkouts = app.db.dao().workoutsBetween(dayIsoStart, dayIsoEnd)
+        val todaysWorkoutCount = todaysWorkouts.size
+        val zonedActivities = todaysWorkouts.filter { it.hasZoneData }.mapNotNull { w ->
+            val s = runCatching { java.time.Instant.parse(w.start).toEpochMilli() }.getOrNull()
+            val e = runCatching { java.time.Instant.parse(w.end).toEpochMilli() }.getOrNull()
+            if (s == null || e == null) null
+            else PacePoints.ZonedActivity(s, e, w.zoneDurationsMs())
+        }
         val pacing: PaceBreakdown
         var estimated = false
         var zoneDerived = false
         if (samples.isNotEmpty()) {
-            pacing = PacePoints.compute(samples, rhr, maxHr, cfg)
+            // Live HR and logged activities cover different windows — merge, never substitute.
+            pacing = PacePoints.combine(samples, zonedActivities, rhr, maxHr, cfg)
+            zoneDerived = zonedActivities.isNotEmpty()
         } else {
             // No live HR (BLE / Health Connect). Use WHOOP's own measured zone durations from the
             // activities logged today — real intraday zone time beats any average-HR guess.
-            val todaysWorkouts = app.db.dao().workoutsBetween(dayIsoStart, dayIsoEnd)
-            val zoned = todaysWorkouts.filter { it.hasZoneData }
-            if (zoned.isNotEmpty()) {
-                val perZone = (0..5).map { z ->
-                    zoned.sumOf { it.zoneDurationsMs()[z] ?: 0L }
-                }
-                pacing = PacePoints.fromZoneDurations(perZone, rhr, maxHr, cfg)
+            if (zonedActivities.isNotEmpty()) {
+                pacing = PacePoints.combine(
+                    emptyList(), zonedActivities, rhr, maxHr, cfg,
+                )
                 estimated = false
                 zoneDerived = true
             } else {
