@@ -34,6 +34,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -70,6 +76,18 @@ fun TodayScreen(
     onOpenMonthly: () -> Unit,
 ) {
     var showWhy by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val blePermissions = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { granted ->
+        // Only start once the user has decided; otherwise the service reports the missing permission.
+        if (granted.values.all { it }) vm.startLive()
+    }
+    val needsBlePermission: () -> Boolean = {
+        listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT).any {
+            ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
+        }
+    }
     val sheet = rememberModalBottomSheetState()
     val live = s.hr.connected && !s.hr.isStale()
     val zone = s.hr.bpm?.let { PacePoints.zoneAt(it, s.rhr ?: 60, s.maxHeartRate, s.config).name }
@@ -252,7 +270,15 @@ fun TodayScreen(
                     VGap(8)
                 }
                 Button(
-                    onClick = if (s.hr.connected) vm::stopLive else vm::startLive,
+                    onClick = {
+                        when {
+                            s.hr.connected -> vm.stopLive()
+                            needsBlePermission() -> blePermissions.launch(
+                                arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+                            )
+                            else -> vm.startLive()
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (live) MaterialTheme.colorScheme.primary

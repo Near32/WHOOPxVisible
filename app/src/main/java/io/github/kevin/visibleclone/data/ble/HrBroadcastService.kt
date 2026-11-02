@@ -79,13 +79,17 @@ class HrBroadcastService : Service() {
         }
 
         fun stop(context: Context) {
-            context.startService(
-                Intent(context, HrBroadcastService::class.java).setAction(ACTION_STOP),
-            )
+            // stopService destroys the running instance (running onDestroy). The ACTION_STOP path
+            // below is kept for callers that only have an intent.
+            context.stopService(Intent(context, HrBroadcastService::class.java))
+            state.value = HrState(status = "Live HR off")
         }
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var activeScan: ScanCallback? = null
+    /** Backoff for reconnect attempts, so a stubborn strap cannot thrash the radio. */
+    private var reconnectAttempts = 0
     private var alerter: PacingAlerter? = null
     private var restingHr = 60
     private var maxHr = 185
@@ -160,10 +164,22 @@ class HrBroadcastService : Service() {
 
     override fun onDestroy() {
         android.util.Log.i(TAG, "onDestroy")
+        stopScanning()
         gatt?.close()
         gatt = null
         flush()
-        state.value = state.value.copy(connected = false, bpm = null, status = "Stopped")
+
+        // Explicitly drop the foreground notification; stopSelf alone can leave it behind on
+        // some OEM builds, and a stale "Pacing active" is misleading.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
+        getSystemService(NotificationManager::class.java)?.cancel(NOTIFICATION_ID)
+
+        state.value = HrState(status = "Live HR off")
         scope.cancel()
         super.onDestroy()
     }
@@ -172,10 +188,18 @@ class HrBroadcastService : Service() {
 
     @SuppressLint("MissingPermission")
     private fun scanAndConnect() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            state.value = state.value.copy(status = "Bluetooth permission missing")
+        val granted = { p: String ->
+            ContextCompat.checkSelfPermission(this, p) == PackageManager.PERMISSION_GRANTED
+        }
+        // Both are required: SCAN finds the strap, CONNECT reads device.name and connectGatt().
+        if (!granted(Manifest.permission.BLUETOOTH_SCAN)) {
+            state.value = state.value.copy(status = "Bluetooth scan permission missing")
+            return
+        }
+        if (!granted(Manifest.permission.BLUETOOTH_CONNECT)) {
+            state.value = state.value.copy(
+                status = "Bluetooth connect permission missing — grant it in app settings",
+            )
             return
         }
         val adapter = (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
@@ -186,36 +210,60 @@ class HrBroadcastService : Service() {
 
         state.value = state.value.copy(status = "Searching for broadcast…")
         val scanner = adapter.bluetoothLeScanner ?: return
+        stopScanning()
+
         val callback = object : ScanCallback() {
-            @SuppressLint("MissingPermission")
             override fun onScanResult(callbackType: Int, result: ScanResult) {
-                android.util.Log.d(
-                    TAG,
-                    "scan hit name=${result.device.name} uuids=${result.scanRecord?.serviceUuids}",
-                )
-                // The strap advertises the HR service UUID when broadcasting.
-                val hasHrService = result.scanRecord?.serviceUuids?.any { it.uuid == HEART_RATE_SERVICE }
-                    ?: result.scanRecord?.serviceUuids != null
-                if (hasHrService) {
-                    scanner.stopScan(this)
-                    state.value = state.value.copy(status = "Connecting…", deviceName = result.device.name)
-                    gatt = result.device.connectGatt(this@HrBroadcastService, false, gattCallback)
+                // Never let a permission or race exception escape: it would kill the process.
+                runCatching {
+                    val name = runCatching { result.device.name }.getOrNull()
+                    val uuids = result.scanRecord?.serviceUuids
+                    android.util.Log.d(TAG, "scan hit name=$name uuids=$uuids")
+                    val hasHrService = uuids?.any { it.uuid == HEART_RATE_SERVICE } == true
+                    if (hasHrService && gatt == null) {
+                        stopScanning()
+                        state.value = state.value.copy(status = "Connecting…", deviceName = name)
+                        gatt = result.device.connectGatt(this@HrBroadcastService, false, gattCallback)
+                    }
+                }.onFailure { e ->
+                    android.util.Log.e(TAG, "scan result handling failed", e)
+                    state.value = state.value.copy(status = "Scan error: ${e.message}")
                 }
             }
 
             override fun onScanFailed(errorCode: Int) {
+                android.util.Log.w(TAG, "onScanFailed $errorCode")
                 state.value = state.value.copy(status = "Scan failed ($errorCode)")
             }
         }
-        scanner.startScan(null, ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), callback)
+        activeScan = callback
+        runCatching {
+            scanner.startScan(
+                null,
+                ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(),
+                callback,
+            )
+        }.onFailure { e ->
+            state.value = state.value.copy(status = "Could not start scan: ${e.message}")
+        }
 
         // Give the strap a window to be found, then retry later rather than spinning forever.
         scope.launch {
             delay(30_000)
             if (gatt == null) {
-                scanner.stopScan(callback)
+                stopScanning()
                 state.value = state.value.copy(status = "No broadcast found — toggle Broadcast Heart Rate")
             }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun stopScanning() {
+        val cb = activeScan ?: return
+        activeScan = null
+        runCatching {
+            (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager)
+                .adapter?.bluetoothLeScanner?.stopScan(cb)
         }
     }
 
@@ -225,6 +273,7 @@ class HrBroadcastService : Service() {
             android.util.Log.i(TAG, "onConnectionStateChange status=$status newState=$newState")
             when {
                 newState == BluetoothGatt.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS -> {
+                    reconnectAttempts = 0
                     state.value = state.value.copy(
                         connected = true,
                         status = "Connected to ${state.value.deviceName ?: "strap"} — discovering services…",
@@ -243,7 +292,19 @@ class HrBroadcastService : Service() {
                             "Connection refused (GATT $status). Is another app holding the strap?"
                         },
                     )
-                    scope.launch { delay(5_000); scanAndConnect() }
+                    reconnectAttempts += 1
+                    if (reconnectAttempts > 8) {
+                        state.value = state.value.copy(
+                            status = "Stopped retrying after $reconnectAttempts attempts",
+                        )
+                        stopSelf()
+                    } else {
+                        val waitMs = (2_000L * reconnectAttempts).coerceAtMost(30_000L)
+                        state.value = state.value.copy(
+                            status = state.value.status + " (retry $reconnectAttempts in ${waitMs / 1000}s)",
+                        )
+                        scope.launch { delay(waitMs); scanAndConnect() }
+                    }
                 }
                 else -> {
                     // e.g. 133 on some phones when the peripheral rejects the connection.
@@ -370,6 +431,7 @@ class HrBroadcastService : Service() {
 
     // ---------- notification ----------
 
+    @SuppressLint("MissingPermission")
     private fun startForegroundWithNotification() {
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
@@ -390,10 +452,19 @@ class HrBroadcastService : Service() {
             .setOngoing(true)
             .build()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        }.onFailure { e ->
+            android.util.Log.e(TAG, "startForeground failed", e)
+            state.value = state.value.copy(status = "Foreground service failed: ${e.message}")
         }
     }
 }
