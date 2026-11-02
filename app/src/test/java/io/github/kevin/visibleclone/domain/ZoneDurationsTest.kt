@@ -19,12 +19,20 @@ class ZoneDurationsTest {
         assertEquals(0.0, r.points, 1e-9)
     }
 
-    @Test fun `zone midpoints are fractions of max heart rate`() {
-        // zone 0 midpoint = 0.45 * 180 = 81 bpm; zone 5 = 0.95 * 180 = 171 bpm
+    @Test fun `zone midpoints follow heart-rate reserve, not max HR`() {
+        // rhr 60, maxHr 180 -> reserve 120.
+        // zone 0 = [0, 0.40) of reserve -> midpoint 0.20*120 + 60 = 84
+        // zone 5 = [0.90, 1.0]      -> midpoint 0.95*120 + 60 = 174
         val low = PacePoints.fromZoneDurations(listOf(600_000L, 0, 0, 0, 0, 0), rhr, maxHr, cfg)
-        assertEquals(81.0, low.peakBpm.toDouble(), 1.0)
+        assertEquals(84.0, low.peakBpm.toDouble(), 1.0)
         val high = PacePoints.fromZoneDurations(listOf(0, 0, 0, 0, 0, 600_000L), rhr, maxHr, cfg)
-        assertEquals(171.0, high.peakBpm.toDouble(), 1.0)
+        assertEquals(174.0, high.peakBpm.toDouble(), 1.0)
+    }
+
+    @Test fun `zone 1 midpoint sits around half of reserve`() {
+        // [0.40, 0.60) -> 0.50*120 + 60 = 120
+        val z1 = PacePoints.fromZoneDurations(listOf(0, 600_000L, 0, 0, 0, 0), rhr, maxHr, cfg)
+        assertEquals(120.0, z1.peakBpm.toDouble(), 1.0)
     }
 
     @Test fun `time in high zones costs more than the same time low`() {

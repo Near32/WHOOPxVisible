@@ -20,7 +20,10 @@ Run on 2026-11-02, Linux, JDK 21, Android SDK 35/36.
 - Sync: 91 cycles, 90 recoveries, 99 sleeps, 428 workouts; incremental and full-backfill paths both
   exercised. 310 workouts carried `zone_durations`.
 - Stability: 5/5 from real overnight HRV 63 ms / RHR 47 bpm, 90-night baseline.
-- PacePoints: 11.4 of 14 from two logged activities (chess 175 min zone 0, dog-walking 41 min zone 0).
+- PacePoints: 12.1 of 14 from two logged activities (chess 180 min, dog-walking 42 min), scored
+  from WHOOP's measured zone durations.
+- Zone calibration: 312 workouts -> boundaries at 105/135/149/164/180 bpm, consistent with the
+  offline fit and with 40/60/70/80/90% of heart-rate reserve.
 
 Bugs found and fixed by running it: `next_token: null` parsed as the string "null"; `"score": null`
 throwing on `.jsonObject`; `intOrNull` rejecting `54.0` (null resting HR); incremental sync never

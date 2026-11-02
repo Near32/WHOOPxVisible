@@ -47,6 +47,8 @@ data class DashboardState(
     val workoutsToday: Int = 0,
     /** Today's intraday HR readings, for the HR chart. Empty when no live source is running. */
     val todayHr: List<Int> = emptyList(),
+    /** Cumulative PacePoints per 15-minute slot since local midnight (96 entries). */
+    val pacingDay: List<Float> = emptyList(),
     val budget: Double = 14.0,
     val config: PacingConfig = PacingConfig(),
     val sleepHours: Double? = null,
@@ -109,6 +111,58 @@ class DashboardViewModel(private val app: App) : ViewModel() {
             recompute()
             local.update { it.copy(syncing = false) }
         }
+    }
+
+    /**
+     * Cumulative PacePoints through the day, in 15-minute slots.
+     *
+     * Zone durations carry no within-workout timing, so each activity's points are spread evenly
+     * across its start..end window. Live HR samples, when present, are used directly.
+     */
+    private suspend fun buildPacingDay(
+        workoutsToday: Int,
+        dayStart: Long,
+        rhr: Int,
+        maxHr: Int,
+        cfg: PacingConfig,
+        samples: List<HrSample>,
+    ): List<Float> {
+        val slots = FloatArray(96)
+        val dao = app.db.dao()
+
+        if (samples.isNotEmpty()) {
+            // Distribute sampled points into the slot each sample falls in.
+            val ordered = samples.sortedBy { it.timestampMs }
+            for (i in ordered.indices) {
+                val spanMs = if (i + 1 < ordered.size) {
+                    (ordered[i + 1].timestampMs - ordered[i].timestampMs).coerceIn(0L, 60_000L)
+                } else 0L
+                val pts = PacePoints.rateAt(ordered[i].bpm, rhr, maxHr, cfg) * (spanMs / 60_000.0)
+                val slot = ((ordered[i].timestampMs - dayStart) / (15 * 60_000L)).toInt()
+                if (slot in 0..95) slots[slot] += pts.toFloat()
+            }
+        } else if (workoutsToday > 0) {
+            val iso = java.time.Instant.ofEpochMilli(dayStart).toString()
+            val endIso = java.time.Instant.ofEpochMilli(dayStart + 86_400_000L).toString()
+            dao.workoutsBetween(iso, endIso).filter { it.hasZoneData }.forEach { w ->
+                val pts = PacePoints.fromZoneDurations(w.zoneDurationsMs(), rhr, maxHr, cfg).points
+                if (pts <= 0.0) return@forEach
+                val s = runCatching { java.time.Instant.parse(w.start).toEpochMilli() }.getOrNull()
+                    ?: return@forEach
+                val e = runCatching { java.time.Instant.parse(w.end).toEpochMilli() }.getOrNull()
+                    ?: (s + 60_000L)
+                val duration = (e - s).coerceAtLeast(60_000L)
+                for (i in 0..95) {
+                    val slotStart = dayStart + i * 15 * 60_000L
+                    val slotEnd = slotStart + 15 * 60_000L
+                    val overlap = (minOf(e, slotEnd) - maxOf(s, slotStart)).coerceAtLeast(0L)
+                    if (overlap > 0) slots[i] += (pts * overlap / duration).toFloat()
+                }
+            }
+        }
+
+        var acc = 0f
+        return slots.map { acc += it; acc }
     }
 
     private fun isSessionExpired(e: Throwable): Boolean {
@@ -219,6 +273,7 @@ class DashboardViewModel(private val app: App) : ViewModel() {
                 pacingEstimated = estimated,
                 pacingFromZones = zoneDerived,
                 todayHr = samples.takeLast(180).map { it.bpm },
+                pacingDay = buildPacingDay(todaysWorkoutCount, dayStart, rhr, maxHr, cfg, samples),
                 workoutsToday = todaysWorkoutCount,
                 budget = budget,
                 sleepHours = sleepHours,

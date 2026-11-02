@@ -144,6 +144,9 @@ interface HealthDao {
     @Query("SELECT * FROM sleeps ORDER BY start")
     suspend fun allSleeps(): List<SleepEntity>
 
+    @Query("SELECT * FROM workouts ORDER BY start")
+    suspend fun allWorkouts(): List<WorkoutEntity>
+
     @Query("SELECT * FROM workouts WHERE start >= :fromIso AND start < :toIso ORDER BY start")
     suspend fun workoutsBetween(fromIso: String, toIso: String): List<WorkoutEntity>
 

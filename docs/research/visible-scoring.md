@@ -105,6 +105,22 @@ points += rateAt(midpoint_bpm) * zone_minutes
 This applies to both today and historical days. Estimation from the day's average HR is used only
 when no zone data exists at all.
 
+### Inferring WHOOP's zone boundaries
+
+WHOOP returns per-workout `zone_durations` but never the bpm edges. `ZoneCalibrator` recovers them
+from the user's own history:
+
+- if a workout peaking at M spent time in zone z, zone z starts at or below M;
+- if a workout that reached z-1 but not z peaked at M, zone z starts above M.
+
+Intersecting those constraints over all workouts brackets each boundary to a few bpm. On 312 real
+workouts the reserve model explained the data with 8 violations in 340, against 128 in 464 for a
+%-of-max-HR model; the fit yielded boundaries at roughly 40/60/70/80/90% of heart-rate reserve
+(105/135/149/164/180 bpm for RHR 47, max HR 194).
+
+Calibration is manual (Settings → Zone calibration) and writes the result into `whoopZoneHrr`.
+Zones with too few observations keep the default.
+
 ### Daily budget from Stability
 
 Interpolated between two anchors, editable:

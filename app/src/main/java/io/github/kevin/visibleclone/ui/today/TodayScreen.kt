@@ -45,7 +45,8 @@ import io.github.kevin.visibleclone.ui.DashboardState
 import io.github.kevin.visibleclone.ui.DashboardViewModel
 import io.github.kevin.visibleclone.ui.common.PaceArc
 import io.github.kevin.visibleclone.ui.common.SoftCard
-import io.github.kevin.visibleclone.ui.common.Sparkline
+import io.github.kevin.visibleclone.ui.common.PacingDayChart
+import io.github.kevin.visibleclone.ui.common.ScrubSeries
 import io.github.kevin.visibleclone.ui.common.VGap
 import io.github.kevin.visibleclone.ui.common.ZoneHrLine
 import io.github.kevin.visibleclone.ui.theme.Visible
@@ -166,6 +167,28 @@ fun TodayScreen(
                     ZoneStat("Rest", "${s.pacing.restingMinutes}m", Visible.rest)
                     ZoneStat("Activity", "${s.pacing.activityMinutes}m", Visible.activity)
                     ZoneStat("Exertion", "${s.pacing.exertionMinutes}m", Visible.exertion)
+                }
+            }
+        }
+
+        // ---- Pacing day ----
+        if (s.pacingDay.size == 96 && s.pacingDay.any { it > 0f }) {
+            item {
+                SoftCard {
+                    Text("Your pacing day", style = MaterialTheme.typography.titleMedium)
+                    VGap(2)
+                    Text(
+                        "Points accumulate through the day. The line is the daily budget.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    VGap(8)
+                    PacingDayChart(
+                        cumulative = s.pacingDay,
+                        budget = s.budget.toFloat(),
+                        lineColor = MaterialTheme.colorScheme.primary,
+                        nowSlot = LocalTime.now().let { (it.hour * 4 + it.minute / 15).coerceIn(0, 95) },
+                    )
                 }
             }
         }
@@ -340,11 +363,12 @@ fun TodayScreen(
                         )
                     }
                     VGap(8)
-                    Sparkline(
-                        values = s.history.takeLast(7).map { it.stability.toDouble() },
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.fillMaxWidth().height(52.dp),
-                        fill = true,
+                    val week = s.history.takeLast(7)
+                    ScrubSeries(
+                        values = week.map { it.stability.toFloat() },
+                        labels = week.map { it.date.takeLast(5) },
+                        lineColor = MaterialTheme.colorScheme.primary,
+                        valueFormat = { "%.0f / 5".format(it) },
                     )
                     VGap(12)
                     Text(
@@ -352,11 +376,11 @@ fun TodayScreen(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Sparkline(
-                        values = s.history.takeLast(7).map { it.pacePoints },
-                        color = Visible.activity,
-                        modifier = Modifier.fillMaxWidth().height(52.dp),
-                        fill = true,
+                    ScrubSeries(
+                        values = week.map { it.pacePoints.toFloat() },
+                        labels = week.map { it.date.takeLast(5) },
+                        lineColor = Visible.activity,
+                        valueFormat = { "%.1f pts".format(it) },
                     )
                     VGap(10)
                     FilledTonalButton(onClick = onOpenHistory) { Text("Open history") }

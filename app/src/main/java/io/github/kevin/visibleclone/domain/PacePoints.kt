@@ -88,8 +88,8 @@ object PacePoints {
     /**
      * Points from WHOOP's own per-workout zone durations (milliseconds in zones 0-5).
      *
-     * WHOOP zones are fractions of maximum heart rate (edges at 50/60/70/80/90%), not of heart-rate
-     * reserve. We take each zone's midpoint and charge it at our pacing rate, so a logged activity
+     * WHOOP's zone edges are fractions of heart-rate reserve (measured, see [PacingConfig.whoopZoneHrr]).
+     * We take each zone's midpoint in bpm and charge it at our pacing rate, so a logged activity
      * contributes its real measured time-in-zone instead of an estimate from a daily average.
      */
     fun fromZoneDurations(
@@ -98,8 +98,12 @@ object PacePoints {
         maxHr: Int,
         config: PacingConfig,
     ): PaceBreakdown {
-        // Midpoint of each WHOOP zone as a fraction of maximum heart rate.
-        val midpoints = listOf(0.45, 0.55, 0.65, 0.75, 0.85, 0.95)
+        val reserve = (maxHr - restingHr).coerceAtLeast(1)
+        // Edges: zone 0 starts at reserve, zone 5 ends at max HR.
+        val edges = listOf(0.0) + config.whoopZoneHrr + listOf(1.0)
+        val midpoints = (0..5).map { i ->
+            restingHr + ((edges[i] + edges[i + 1]) / 2.0) * reserve
+        }
         val activity = config.activityThreshold(restingHr)
         val exertion = config.exertionThreshold(restingHr, maxHr)
 
@@ -112,7 +116,7 @@ object PacePoints {
         zoneMillis.forEachIndexed { i, msLong ->
             val ms = msLong ?: 0L
             if (ms <= 0L) return@forEachIndexed
-            val bpm = (midpoints[i] * maxHr).toInt()
+            val bpm = midpoints[i].toInt()
             peak = maxOf(peak, bpm)
             val minutes = ms / 60_000.0
             when {

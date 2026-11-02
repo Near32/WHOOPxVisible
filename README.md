@@ -44,8 +44,13 @@ Register `visibleclone://oauth` as the redirect URL in the
 
 ## Tuning
 
+**Zone boundaries** are inferred, not hardcoded: Settings → *Zone calibration* derives WHOOP's
+bpm edges from your own workouts (it brackets each edge between the highest peak HR that missed a
+zone and the lowest that reached it).
+
 Visible does not publish its formulas. Every weight and threshold is in
-`domain/PacingConfig.kt` and editable in Settings; the Today screen's "Explain score" shows the
+`domain/PacingConfig.kt` and editable in Settings — including the budget anchors (4 points at
+Stability 1, 14 at Stability 5) and the per-minute points scale; the Today screen's "Explain score" shows the
 components. Tune after a week of real data rather than trusting the defaults.
 
 ## Deliberately not built

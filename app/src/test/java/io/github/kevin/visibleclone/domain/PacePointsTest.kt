@@ -61,11 +61,20 @@ class PacePointsTest {
         assertEquals(PacePoints.Zone.EXERTION, PacePoints.zoneAt(130, rhr, maxHr, config))
     }
 
-    @Test fun `default scale keeps a realistic day within a few budgets`() {
-        val real = PacingConfig()
-        // A 3-hour active day at 1x activity rate should cost a sensible fraction of a 14-pt budget.
-        val day = PacePoints.fromZoneDurations(listOf(0, 0, 180 * 60_000L, 0, 0, 0), rhr, maxHr, real)
-        assertTrue("expected a few points, got ${day.points}", day.points in 1.0..14.0)
+    @Test fun `a typical tagged day lands inside the budget`() {
+        // 2h pottering in zone 0 plus 30 min in zone 1 — an ordinary day for a pacing user.
+        val day = PacePoints.fromZoneDurations(
+            listOf(120 * 60_000L, 30 * 60_000L, 0, 0, 0, 0), rhr, maxHr, PacingConfig(),
+        )
+        assertTrue("expected within a 14pt budget, got ${day.points}", day.points in 1.0..14.0)
+    }
+
+    @Test fun `a hard exertional day exceeds the budget`() {
+        // 3h of zone 2 is genuinely overexerting and should blow through the budget.
+        val day = PacePoints.fromZoneDurations(
+            listOf(0, 0, 180 * 60_000L, 0, 0, 0), rhr, maxHr, PacingConfig(),
+        )
+        assertTrue("expected over budget, got ${day.points}", day.points > 14.0)
     }
 
     @Test fun `budget interpolates between anchors`() {

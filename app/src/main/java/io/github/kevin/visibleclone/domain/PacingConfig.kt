@@ -38,6 +38,15 @@ data class PacingConfig(
      * ordinary tasks. Tune it once you have a week of real days.
      */
     val zoneScale: Double = 0.05,
+    /**
+     * WHOOP zone boundaries as fractions of heart-rate reserve, for zones 1..5.
+     *
+     * Inferred empirically from 312 logged workouts: the reserve model explains the observed
+     * zone occupancy with 8 violations out of 340, versus 128/464 for a %-of-max-HR model.
+     * Zero-violation fit was 0.42/0.62/0.70/0.82/0.90; these are the conventional round values.
+     * With RHR 47 / HRmax 194 this puts zone 1 at ~106-135 bpm, not the ~87 that %-of-max implied.
+     */
+    val whoopZoneHrr: List<Double> = listOf(0.40, 0.60, 0.70, 0.80, 0.90),
     val fallbackMaxHr: Int = 185,
 
     // ---- Budget ----

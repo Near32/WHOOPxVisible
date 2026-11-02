@@ -149,6 +149,52 @@ fun SettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
             }
         }
 
+        // ---- Zone calibration ----
+        item {
+            Card {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Zone calibration", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "WHOOP publishes per-activity time-in-zone but not the bpm boundaries. " +
+                            "This infers them from your own workouts: if a workout peaking at X reached " +
+                            "zone 2, the boundary is at or below X.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    FilledTonalButton(onClick = vm::calibrateZones, enabled = !s.busy) {
+                        Text("Calibrate from my workouts")
+                    }
+                    s.calibration?.let { cal ->
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            "${cal.workoutsUsed} workouts used",
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        cal.estimates.forEach { e ->
+                            val range = s.zoneBounds.getOrNull(e.zone)?.let { (lo, hi) -> "$lo–$hi bpm" } ?: "—"
+                            Row(
+                                Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    "Zone ${e.zone}" + if (!e.confident) " (default)" else "",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                Text(range, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "Zone 0 is everything below the first boundary.",
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                }
+            }
+        }
+
         // ---- Thresholds ----
         item {
             Card {
@@ -168,6 +214,7 @@ fun SettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
                     NumberField("Activity points per minute", cfg.c1) { cfg = cfg.copy(c1 = it) }
                     NumberField("Exertion base rate", cfg.c2) { cfg = cfg.copy(c2 = it) }
                     NumberField("Exertion exponential alpha", cfg.alpha) { cfg = cfg.copy(alpha = it) }
+                    NumberField("Points scale (per minute)", cfg.zoneScale) { cfg = cfg.copy(zoneScale = it) }
                     NumberField("Budget at Stability 1", cfg.budgetAtStability1) {
                         cfg = cfg.copy(budgetAtStability1 = it)
                     }

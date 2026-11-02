@@ -7,6 +7,7 @@ import io.github.kevin.visibleclone.data.health.HealthConnectSource
 import io.github.kevin.visibleclone.data.local.BodyMeasurement
 import io.github.kevin.visibleclone.data.local.WhoopTokens
 import io.github.kevin.visibleclone.domain.PacingConfig
+import io.github.kevin.visibleclone.domain.ZoneCalibrator
 import io.github.kevin.visibleclone.data.whoop.WhoopAuthClient
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -21,6 +22,8 @@ data class SettingsState(
     val hcGranted: Boolean = false,
     val message: String? = null,
     val busy: Boolean = false,
+    val calibration: ZoneCalibrator.Result? = null,
+    val zoneBounds: List<Pair<Int, Int>> = emptyList(),
 )
 
 class SettingsViewModel(private val app: App) : ViewModel() {
@@ -92,6 +95,36 @@ class SettingsViewModel(private val app: App) : ViewModel() {
         viewModelScope.launch {
             app.settings.clearTokens()
             local.value = local.value.copy(connected = false, profileName = null, body = null, message = "Signed out")
+        }
+    }
+
+    /**
+     * Infers WHOOP's zone boundaries from the workouts already synced, then stores the result in
+     * the pacing config so scoring uses the user's own measured zones.
+     */
+    fun calibrateZones() {
+        viewModelScope.launch {
+            local.value = local.value.copy(busy = true, message = null)
+            runCatching {
+                val workouts = app.db.dao().allWorkouts()
+                val entries = workouts
+                    .filter { it.hasZoneData && (it.maxHeartRate ?: 0) > 0 }
+                    .map { w -> w.maxHeartRate!! to w.zoneDurationsMs().map { (it ?: 0L) > 0L } }
+                val rhr = app.db.dao().allRecoveries().lastOrNull()?.restingHeartRate ?: 60
+                val maxHr = app.settings.currentBody()?.maxHeartRate ?: PacingConfig().fallbackMaxHr
+                val result = ZoneCalibrator.calibrate(entries, rhr, maxHr)
+                val cfg = app.settings.currentConfig()
+                app.settings.saveConfig(cfg.copy(whoopZoneHrr = result.fractions))
+                local.value = local.value.copy(
+                    config = cfg.copy(whoopZoneHrr = result.fractions),
+                    calibration = result,
+                    zoneBounds = result.bpmBounds(rhr, maxHr),
+                    busy = false,
+                    message = "Calibrated from ${result.workoutsUsed} workouts",
+                )
+            }.onFailure { e ->
+                local.value = local.value.copy(busy = false, message = "Calibration failed: ${e.message}")
+            }
         }
     }
 
